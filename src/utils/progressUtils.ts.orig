@@ -1,0 +1,114 @@
+import { categoryMeta } from '../data/northstarMockData'
+import type { Activity, MonthlyActivityStatus, Project } from '../types/roadmap'
+import { getActivityGlobalStatus, getProjectSavingsTotals } from './roadmapModel'
+
+const statusBaseline: Record<MonthlyActivityStatus, number> = {
+  planned: 0,
+  'in-progress': 55,
+  continued: 60,
+  paused: 25,
+  skipped: 5,
+  resumed: 50,
+  completed: 100,
+  cancelled: 0,
+}
+
+export function getActivityProgress(activity: Activity, monthId?: string) {
+  const monthPlan = monthId ? activity.monthlyEntries[monthId] : undefined
+  const progress = monthPlan?.progress ?? 0
+  const status = monthPlan?.status ?? getActivityGlobalStatus(activity)
+  return Math.max(progress, statusBaseline[status])
+}
+
+export function getAverageProgress(activities: Activity[], monthId?: string) {
+  if (!activities.length) {
+    return 0
+  }
+
+  const total = activities.reduce((sum, activity) => sum + getActivityProgress(activity, monthId), 0)
+  return Math.round(total / activities.length)
+}
+
+export function getMonthlyLoadLabel(count: number) {
+  if (count >= 9) {
+    return 'Overloaded'
+  }
+
+  if (count >= 6) {
+    return 'Heavy'
+  }
+
+  if (count >= 3) {
+    return 'Balanced'
+  }
+
+  return 'Light'
+}
+
+export function getCategoryProgress(activities: Activity[]) {
+  return Object.values(categoryMeta)
+    .map((category) => {
+      const categoryActivities = activities.filter((activity) => activity.category === category.key)
+      return {
+        category,
+        count: categoryActivities.length,
+        progress: getAverageProgress(categoryActivities),
+      }
+    })
+    .filter((entry) => entry.count > 0)
+}
+
+export function getCompletedCount(activities: Activity[]) {
+  return activities.filter((activity) => getActivityGlobalStatus(activity) === 'completed').length
+}
+
+export function getCompletionRate(activities: Activity[]) {
+  if (!activities.length) {
+    return 0
+  }
+
+  return Math.round((getCompletedCount(activities) / activities.length) * 100)
+}
+
+export function getSavingsProgress(project: Project) {
+  const { target, actual } = getProjectSavingsTotals(project)
+
+  if (!target) {
+    return 0
+  }
+
+  return Math.round((actual / target) * 100)
+}
+
+export function getTopFocusActivities(activities: Activity[]) {
+  const priorityWeight = {
+    critical: 4,
+    high: 3,
+    medium: 2,
+    low: 1,
+  }
+
+  return [...activities].sort((left, right) => {
+    const rightScore =
+      priorityWeight[right.priority] * 100 +
+      getActivityProgress(right) +
+      (right.milestone ? 40 : 0) +
+      (right.relationshipMode === 'locked-sequence' ? 20 : 0)
+
+    const leftScore =
+      priorityWeight[left.priority] * 100 +
+      getActivityProgress(left) +
+      (left.milestone ? 40 : 0) +
+      (left.relationshipMode === 'locked-sequence' ? 20 : 0)
+
+    return rightScore - leftScore
+  })
+}
+
+export function formatCurrency(amount: number) {
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    maximumFractionDigits: 0,
+  }).format(amount)
+}

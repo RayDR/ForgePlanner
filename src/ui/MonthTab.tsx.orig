@@ -1,0 +1,17 @@
+import { Button } from './Button'
+
+interface MonthTabProps {
+  label: string
+  active: boolean
+  count: number
+  onClick: () => void
+}
+
+export function MonthTab({ label, active, count, onClick }: MonthTabProps) {
+  return (
+    <Button variant={active ? 'active' : 'ghost'} className="month-tab" onClick={onClick}>
+      <span>{label}</span>
+      <span className="month-tab-count">{count}</span>
+    </Button>
+  )
+}

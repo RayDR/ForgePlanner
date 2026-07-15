@@ -1,0 +1,215 @@
+import { useEffect, useMemo, useState } from 'react'
+import { useNavigate, useParams } from 'react-router-dom'
+import { useRoadmapStore } from '../hooks/useRoadmapStore'
+import { Card } from '../ui/Card'
+import { buildYearMonths } from '../utils/dateUtils'
+import { formatCurrency } from '../utils/progressUtils'
+import { getActivityProgressForMonth, getActivityStatusForMonth, getProjectSavingsTotals, getSavingsEntry, getYearlySavingsTotals } from '../utils/roadmapModel'
+import { MonthCard } from './MonthCard'
+
+function getSavingsToneClass(target: number, actual: number) {
+  if (target <= 0 && actual <= 0) {
+    return 'savings-state-strong-red'
+  }
+
+  const difference = actual - target
+  if (actual === 0) {
+    return 'savings-state-strong-red'
+  }
+
+  if (target > 0) {
+    const ratio = (actual / target) * 100
+    if (ratio > 0 && ratio <= 25) {
+      return 'savings-state-red'
+    }
+    if (ratio > 25 && ratio < 70) {
+      return 'savings-state-soft-red'
+    }
+    if (ratio >= 70 && ratio < 100) {
+      return 'savings-state-orange'
+    }
+    if (ratio === 100) {
+      return 'savings-state-neutral'
+    }
+    if (ratio > 100) {
+      return difference >= 100 ? 'savings-state-strong-green' : 'savings-state-light-green'
+    }
+  }
+
+  return 'savings-state-strong-red'
+}
+
+export function AnnualRoadmap() {
+  const navigate = useNavigate()
+  const project = useRoadmapStore((state) => state.project)
+  const activities = useRoadmapStore((state) => state.activities)
+  const createActivity = useRoadmapStore((state) => state.createActivity)
+  const selectedYear = useRoadmapStore((state) => state.selectedYear)
+  const setSelectedMonthId = useRoadmapStore((state) => state.setSelectedMonthId)
+  const openActivity = useRoadmapStore((state) => state.openActivity)
+  const skipActivityMonth = useRoadmapStore((state) => state.skipActivityMonth)
+  const pauseActivityMonth = useRoadmapStore((state) => state.pauseActivityMonth)
+  const continueActivityInMonth = useRoadmapStore((state) => state.continueActivityInMonth)
+  const resumeActivityInMonth = useRoadmapStore((state) => state.resumeActivityInMonth)
+  const moveMonthlyEntry = useRoadmapStore((state) => state.moveMonthlyEntry)
+  const updateSavingsEntry = useRoadmapStore((state) => state.updateSavingsEntry)
+  const locale = useRoadmapStore((state) => state.locale)
+  const { planId } = useParams()
+  const [viewportWidth, setViewportWidth] = useState<number>(typeof window === 'undefined' ? 1200 : window.innerWidth)
+  const [monthOrder, setMonthOrder] = useState<Record<string, string[]>>({})
+
+  const months = buildYearMonths(selectedYear, project.startDate, project.endDate)
+  const annualSavings = getYearlySavingsTotals(project, selectedYear)
+  const globalSavings = getProjectSavingsTotals(project)
+  const maxVisibleEntries = viewportWidth >= 1400 ? 3 : 2
+
+  useEffect(() => {
+    function onResize() {
+      setViewportWidth(window.innerWidth)
+    }
+
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [])
+
+  useEffect(() => {
+    setMonthOrder((current) => {
+      const next: Record<string, string[]> = {}
+      for (const month of months) {
+        const monthActivityIds = activities.filter((activity) => activity.monthlyEntries[month.id]).map((activity) => activity.id)
+        const existing = current[month.id] ?? []
+        const preserved = existing.filter((id) => monthActivityIds.includes(id))
+        const missing = monthActivityIds.filter((id) => !preserved.includes(id))
+        next[month.id] = [...preserved, ...missing]
+      }
+      return next
+    })
+  }, [activities, months])
+
+  const entriesByMonth = useMemo(() => {
+    const byId = new Map(activities.map((activity) => [activity.id, activity]))
+    return Object.fromEntries(
+      months.map((month) => {
+        const order = monthOrder[month.id] ?? []
+        const orderedActivities = order.map((id) => byId.get(id)).filter((item): item is typeof activities[number] => Boolean(item))
+        const fallback = activities.filter(
+          (activity) => activity.monthlyEntries[month.id] && !order.includes(activity.id),
+        )
+
+        const rows = [...orderedActivities, ...fallback]
+          .filter((activity) => Boolean(activity.monthlyEntries[month.id]))
+          .map((activity) => ({
+            activity,
+            status: getActivityStatusForMonth(activity, month.id) ?? 'planned',
+            progress: getActivityProgressForMonth(activity, month.id),
+          }))
+
+        return [month.id, rows]
+      }),
+    )
+  }, [activities, months, monthOrder])
+
+  function createMonthActivity(monthId: string) {
+    const month = months.find((item) => item.id === monthId)
+    if (!month) {
+      return
+    }
+
+    createActivity({
+      title: 'New objective',
+      description: '',
+      category: 'career',
+      priority: 'medium',
+      relationshipMode: 'independent',
+      startDate: month.startDate,
+      endDate: month.endDate,
+      firstMonthId: month.id,
+      initialStatus: 'planned',
+      dependencyIds: [],
+      linkedActivityIds: [],
+      milestone: false,
+      notes: '',
+      subtasks: [],
+    })
+    setSelectedMonthId(monthId)
+    navigate(planId ? `/plans/${planId}/monthly/${monthId}` : `/monthly/${monthId}`)
+  }
+
+  const t =
+    locale === 'es'
+      ? {
+          yearTotals: 'Total anual',
+          globalTotals: 'Total global',
+          target: 'Objetivo',
+          actual: 'Real',
+          difference: 'Diferencia',
+          totalTarget: 'Objetivo total',
+          totalActual: 'Real total',
+          remaining: 'Restante',
+          percentage: 'Porcentaje',
+        }
+      : {
+          yearTotals: 'Annual total',
+          globalTotals: 'Global total',
+          target: 'Target',
+          actual: 'Actual',
+          difference: 'Difference',
+          totalTarget: 'Total target',
+          totalActual: 'Total actual',
+          remaining: 'Remaining',
+          percentage: 'Percentage',
+        }
+
+  return (
+    <div className="roadmap-stack">
+      <section className="roadmap-totals-grid">
+        <Card className="roadmap-summary-card">
+          <strong>{t.yearTotals}</strong>
+          <span>{t.target}: {formatCurrency(annualSavings.target)}</span>
+          <span>{t.actual}: {formatCurrency(annualSavings.actual)}</span>
+          <span>{t.difference}: {formatCurrency(annualSavings.difference)}</span>
+        </Card>
+        <Card className="roadmap-summary-card">
+          <strong>{t.globalTotals}</strong>
+          <span>{t.totalTarget}: {formatCurrency(globalSavings.target)}</span>
+          <span>{t.totalActual}: {formatCurrency(globalSavings.actual)}</span>
+          <span>{t.remaining}: {formatCurrency(globalSavings.remaining)}</span>
+          <span>{t.percentage}: {globalSavings.progress}%</span>
+        </Card>
+      </section>
+
+      <section className="annual-month-grid">
+        {months.map((month) => {
+          const savings = getSavingsEntry(project, month.id)
+          const entries = entriesByMonth[month.id] ?? []
+          const savingsTarget = savings?.target ?? 0
+          const savingsActual = savings?.actual ?? 0
+
+          return (
+            <MonthCard
+              key={month.id}
+              month={month}
+              monthOptions={months}
+              entries={entries}
+              maxVisible={maxVisibleEntries}
+              savings={{
+                target: savingsTarget,
+                actual: savingsActual,
+                notes: savings?.notes,
+              }}
+              savingsToneClass={getSavingsToneClass(savingsTarget, savingsActual)}
+              onOpenActivity={openActivity}
+              onSkip={skipActivityMonth}
+              onPause={pauseActivityMonth}
+              onContinueIn={continueActivityInMonth}
+              onResumeIn={resumeActivityInMonth}
+              onMoveEntry={moveMonthlyEntry}
+              onSaveSavings={updateSavingsEntry}
+              onCreateActivity={() => createMonthActivity(month.id)}
+            />
+          )
+        })}
+      </section>
+    </div>
+  )
+}

@@ -1,0 +1,278 @@
+import { useEffect, useMemo, useState } from 'react'
+import { useLocation, useNavigate, useParams } from 'react-router-dom'
+import { useForgePlannerStore } from '../hooks/useForgePlannerStore'
+import { useRoadmapStore } from '../hooks/useRoadmapStore'
+import { activitiesForMonth, buildYearMonths } from '../utils/dateUtils'
+import { getProjectSavingsTotals, getSavingsEntry, getYearlySavingsTotals } from '../utils/roadmapModel'
+import { MonthlyKanban } from '../kanban/MonthlyKanban'
+import { Card } from '../ui/Card'
+import { MonthTab } from '../ui/MonthTab'
+import { MonthPanel } from '../ui/MonthPanel'
+import { ActivityTimelineItem } from '../ui/ActivityTimelineItem'
+import { ActivityRow } from '../ui/ActivityRow'
+import { EmptyState } from '../ui/EmptyState'
+import { Button } from '../ui/Button'
+import { KanbanIcon, ListIcon } from '../ui/icons'
+import { formatCurrency } from '../utils/progressUtils'
+
+export function MonthlyFocusView() {
+  const { monthId } = useParams()
+  const location = useLocation()
+  const navigate = useNavigate()
+  const project = useRoadmapStore((state) => state.project)
+  const activities = useRoadmapStore((state) => state.activities)
+  const locale = useRoadmapStore((state) => state.locale)
+  const openActivity = useRoadmapStore((state) => state.openActivity)
+  const selectedMonthId = useRoadmapStore((state) => state.selectedMonthId)
+  const setSelectedMonthId = useRoadmapStore((state) => state.setSelectedMonthId)
+  const updateSavingsEntry = useRoadmapStore((state) => state.updateSavingsEntry)
+  const activePlanId = useForgePlannerStore((state) => state.activePlanId)
+  const monthlyViewPreference = useForgePlannerStore((state) =>
+    state.activePlanId ? state.plans.find((plan) => plan.id === state.activePlanId)?.monthlyViewPreference ?? 'list' : 'list',
+  )
+  const setMonthlyViewPreference = useForgePlannerStore((state) => state.setMonthlyViewPreference)
+  const { planId } = useParams()
+  const [viewMode, setViewMode] = useState<'list' | 'kanban'>(monthlyViewPreference)
+
+  useEffect(() => {
+    setViewMode(monthlyViewPreference)
+  }, [monthlyViewPreference])
+
+  const activeMonthId = monthId ?? selectedMonthId
+  const requestedHighlight = (location.state as { highlightMonthId?: string } | null)?.highlightMonthId
+  const [highlightedMonthId, setHighlightedMonthId] = useState<string | null>(requestedHighlight ?? null)
+
+  useEffect(() => {
+    if (!requestedHighlight) return
+    setHighlightedMonthId(requestedHighlight)
+    const timeout = window.setTimeout(() => setHighlightedMonthId(null), 2400)
+    return () => window.clearTimeout(timeout)
+  }, [requestedHighlight, location.key])
+  const [calendarYear, calendarMonth] = activeMonthId.split('-').map(Number)
+  const year = calendarYear
+  const firstWeekday = new Date(Date.UTC(calendarYear, calendarMonth - 1, 1)).getUTCDay()
+  const daysInMonth = new Date(Date.UTC(calendarYear, calendarMonth, 0)).getUTCDate()
+  const weekdayLabels = locale === 'es' ? ['D', 'L', 'M', 'M', 'J', 'V', 'S'] : ['S', 'M', 'T', 'W', 'T', 'F', 'S']
+  const calendarDays = Array.from({ length: firstWeekday + daysInMonth }, (_, index) => index < firstWeekday ? null : index - firstWeekday + 1)
+  const monthOptions = buildYearMonths(year, project.startDate, project.endDate).filter((month) => month.active)
+  const monthActivities = useMemo(() => activitiesForMonth(activities, activeMonthId), [activities, activeMonthId])
+  const activeItems = monthActivities.filter((activity) => {
+    const status = activity.monthlyEntries[activeMonthId]?.status
+    return status === 'planned' || status === 'in-progress' || status === 'continued'
+  })
+  const resumedItems = monthActivities.filter((activity) => activity.monthlyEntries[activeMonthId]?.status === 'resumed')
+  const skippedItems = monthActivities.filter((activity) => activity.monthlyEntries[activeMonthId]?.status === 'skipped')
+  const pausedItems = monthActivities.filter((activity) => activity.monthlyEntries[activeMonthId]?.status === 'paused')
+  const completedItems = monthActivities.filter((activity) => activity.monthlyEntries[activeMonthId]?.status === 'completed')
+  const milestones = monthActivities.filter((activity) => activity.milestone)
+  const projectMilestones = project.milestones.filter((milestone) => milestone.monthId === activeMonthId)
+  const savingsEntry = getSavingsEntry(project, activeMonthId)
+  const yearlySavings = getYearlySavingsTotals(project, year)
+  const projectSavings = getProjectSavingsTotals(project)
+  const [targetValue, setTargetValue] = useState(String(savingsEntry?.target ?? 0))
+  const [actualValue, setActualValue] = useState(String(savingsEntry?.actual ?? 0))
+  const [notesValue, setNotesValue] = useState(savingsEntry?.notes ?? '')
+
+  useEffect(() => {
+    setTargetValue(String(savingsEntry?.target ?? 0))
+    setActualValue(String(savingsEntry?.actual ?? 0))
+    setNotesValue(savingsEntry?.notes ?? '')
+  }, [savingsEntry?.target, savingsEntry?.actual, savingsEntry?.notes, activeMonthId])
+
+  const t =
+    locale === 'es'
+      ? {
+          monthTabs: 'Meses',
+          agenda: 'Plan mensual',
+          focus: 'Monthly Focus',
+          active: 'Active this month',
+          resumed: 'Resumed this month',
+          skipped: 'Skipped this month',
+          paused: 'Paused this month',
+          milestones: 'Milestones',
+          completed: 'Completed this month',
+          savings: 'Savings this month',
+          yearlyTotals: 'Yearly savings totals',
+          projectTotals: 'Project totals',
+          save: 'Save',
+          target: 'Target',
+          actual: 'Actual',
+          difference: 'Difference',
+          notes: 'Notes',
+        }
+      : {
+          monthTabs: 'Months',
+          agenda: 'Monthly planner',
+          focus: 'Monthly Focus',
+          active: 'Active this month',
+          resumed: 'Resumed this month',
+          skipped: 'Skipped this month',
+          paused: 'Paused this month',
+          milestones: 'Milestones',
+          completed: 'Completed this month',
+          savings: 'Savings this month',
+          yearlyTotals: 'Yearly savings totals',
+          projectTotals: 'Project totals',
+          save: 'Save',
+          target: 'Target',
+          actual: 'Actual',
+          difference: 'Difference',
+          notes: 'Notes',
+        }
+
+  return (
+    <div className="monthly-layout">
+      <aside className="month-sidebar card">
+        <p className="eyebrow">{t.monthTabs}</p>
+        <div className="month-tab-list">
+          {monthOptions.map((month) => (
+            <MonthTab
+              key={month.id}
+              label={month.shortLabel}
+              count={activitiesForMonth(activities, month.id).length}
+              active={month.id === activeMonthId}
+              highlighted={month.id === highlightedMonthId}
+              onClick={() => {
+                setSelectedMonthId(month.id)
+                navigate(planId ? `/plans/${planId}/monthly/${month.id}` : `/monthly/${month.id}`)
+              }}
+            />
+          ))}
+        </div>
+      </aside>
+
+      <section className="agenda-column">
+        {activeMonthId < new Date().toISOString().slice(0, 7) ? <div className="past-month-notice" role="status">{locale === 'es' ? 'Este mes ya pasó. Puedes seguir editándolo sin restricciones.' : 'This month is in the past. You can still edit it without restrictions.'}</div> : null}
+        <Card>
+          <div className="row-between">
+            <div className="stack-sm">
+              <p className="eyebrow">{t.agenda}</p>
+              <h2>{activeMonthId}</h2>
+            </div>
+            <div className="view-toggle" role="tablist" aria-label="Monthly view mode">
+              <button
+                type="button"
+                className={viewMode === 'list' ? 'btn btn-active view-toggle-btn' : 'btn btn-ghost view-toggle-btn'}
+                onClick={() => {
+                  setViewMode('list')
+                  if (activePlanId) {
+                    setMonthlyViewPreference(activePlanId, 'list')
+                  }
+                }}
+              >
+                <ListIcon width={14} height={14} />
+                <span>List</span>
+              </button>
+              <button
+                type="button"
+                className={viewMode === 'kanban' ? 'btn btn-active view-toggle-btn' : 'btn btn-ghost view-toggle-btn'}
+                onClick={() => {
+                  setViewMode('kanban')
+                  if (activePlanId) {
+                    setMonthlyViewPreference(activePlanId, 'kanban')
+                  }
+                }}
+              >
+                <KanbanIcon width={14} height={14} />
+                <span>Kanban</span>
+              </button>
+            </div>
+          </div>
+          <div className="month-calendar" aria-label={locale === 'es ? 'Calendario
+
+        {viewMode === 'kanban' ? (
+          <MonthPanel title="Kanban">
+            <MonthlyKanban
+              monthId={activeMonthId}
+              activities={monthActivities}
+              statuses={project.statusDefinitions}
+              onOpen={openActivity}
+            />
+          </MonthPanel>
+        ) : (
+          <>
+            <MonthPanel title={t.focus}>
+              {activeItems.length ? (
+                activeItems.map((activity) => <ActivityTimelineItem key={activity.id} activity={activity} monthId={activeMonthId} onSelect={openActivity} />)
+              ) : (
+                <EmptyState title="No focus yet" copy="Add a monthly entry or continue an activity into this month." />
+              )}
+            </MonthPanel>
+
+            <MonthPanel title={t.active}>
+              {activeItems.length ? activeItems.map((activity) => <ActivityRow key={activity.id} activity={activity} monthId={activeMonthId} onOpen={openActivity} />) : <EmptyState title="No active items" copy="This month has no planned or in-progress activity yet." />}
+            </MonthPanel>
+
+            <MonthPanel title={t.resumed}>
+              {resumedItems.length ? resumedItems.map((activity) => <ActivityRow key={activity.id} activity={activity} monthId={activeMonthId} onOpen={openActivity} />) : <EmptyState title="No resumed items" copy="No activity was resumed in this month." />}
+            </MonthPanel>
+
+            <MonthPanel title={t.skipped}>
+              {skippedItems.length ? skippedItems.map((activity) => <ActivityRow key={activity.id} activity={activity} monthId={activeMonthId} onOpen={openActivity} />) : <EmptyState title="No skipped items" copy="No activity was skipped in this month." />}
+            </MonthPanel>
+
+            <MonthPanel title={t.paused}>
+              {pausedItems.length ? pausedItems.map((activity) => <ActivityRow key={activity.id} activity={activity} monthId={activeMonthId} onOpen={openActivity} />) : <EmptyState title="No paused items" copy="No activity is paused in this month." />}
+            </MonthPanel>
+          </>
+        )}
+
+        <MonthPanel title={t.milestones}>
+          {milestones.length || projectMilestones.length ? (
+            <>
+              {projectMilestones.map((milestone) => (
+                <article key={milestone.id} className="timeline-item">
+                  <header>
+                    <strong>{milestone.title}</strong>
+                  </header>
+                </article>
+              ))}
+              {milestones.map((activity) => (
+                <ActivityRow key={activity.id} activity={activity} monthId={activeMonthId} onOpen={openActivity} />
+              ))}
+            </>
+          ) : (
+            <EmptyState title="No milestones" copy="Milestones will appear here when this month has milestone activity or project checkpoints." />
+          )}
+        </MonthPanel>
+
+        <MonthPanel title={t.completed}>
+          {completedItems.length ? completedItems.map((activity) => <ActivityRow key={activity.id} activity={activity} monthId={activeMonthId} onOpen={openActivity} />) : <EmptyState title="Nothing completed" copy="Completed monthly entries will appear here." />}
+        </MonthPanel>
+
+        <MonthPanel title={t.savings}>
+          <div className="form-grid">
+            <label className="field-wrap">
+              <span>{t.target}</span>
+              <input className="field-input" type="number" value={targetValue} onChange={(event) => setTargetValue(event.target.value)} />
+            </label>
+            <label className="field-wrap">
+              <span>{t.actual}</span>
+              <input className="field-input" type="number" value={actualValue} onChange={(event) => setActualValue(event.target.value)} />
+            </label>
+            <label className="field-wrap">
+              <span>{t.difference}</span>
+              <input className="field-input" value={formatCurrency(Number(actualValue || 0) - Number(targetValue || 0))} readOnly />
+            </label>
+            <label className="field-wrap">
+              <span>{t.notes}</span>
+              <textarea className="field-input" value={notesValue} onChange={(event) => setNotesValue(event.target.value)} />
+            </label>
+          </div>
+          <div className="row-between">
+            <div className="stack-sm">
+              <span>{t.yearlyTotals}: {formatCurrency(yearlySavings.target)} / {formatCurrency(yearlySavings.actual)} / {formatCurrency(yearlySavings.difference)}</span>
+              <span>{t.projectTotals}: {formatCurrency(projectSavings.target)} / {formatCurrency(projectSavings.actual)} / {formatCurrency(projectSavings.remaining)}</span>
+            </div>
+            <Button
+              variant="primary"
+              onClick={() => updateSavingsEntry(activeMonthId, Number(targetValue || 0), Number(actualValue || 0), notesValue)}
+            >
+              {t.save}
+            </Button>
+          </div>
+        </MonthPanel>
+      </section>
+    </div>
+  )
+}
