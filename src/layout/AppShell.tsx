@@ -7,16 +7,13 @@ import { copy } from '../i18n'
 import { Button } from '../ui/Button'
 import { Card } from '../ui/Card'
 import { IconButton } from '../ui/IconButton'
-import { LocaleThemeControls } from '../ui/LocaleThemeControls'
 import { formatDateRange, getProjectYears } from '../utils/dateUtils'
 import { formatCurrency, getAverageProgress, getSavingsProgress } from '../utils/progressUtils'
 import { getProjectSavingsTotals, getYearlySavingsTotals, isSavingsTrackingEnabled } from '../utils/roadmapModel'
 import { resolveInitialMonthForYear } from '../utils/monthSelection'
 import { CalendarIcon, ListIcon, MoreVerticalIcon, PencilIcon } from '../ui/icons'
 import { useSession } from '../auth/SessionProvider'
-import { NotificationCenter } from '../notifications/NotificationCenter'
-import { AccountMenu } from '../account/AccountMenu'
-import { CollaborationLauncher } from '../plans/CollaborationLauncher'
+import { HeaderActions } from './HeaderActions'
 
 const views = [
   { to: '/roadmap', label: 'Annual roadmap' },
@@ -183,12 +180,12 @@ export function AppShell() {
     <div className="app-bg">
       <div className="shell">
         <header className="app-header">
-          <div className="app-header-topbar">
+          <div className="app-header-topbar global-app-bar">
             <Button className="back-to-plans" variant="ghost" onClick={() => navigate('/plans')}>
               <span aria-hidden="true">←</span>
               {t.backToPlans}
             </Button>
-            <div className="header-account-controls"><NotificationCenter /><CollaborationLauncher /><AccountMenu /><LocaleThemeControls
+            <HeaderActions
               locale={locale}
               theme={theme}
               onToggleLocale={() => { const next = locale === 'es' ? 'en' : 'es'; setLocale(next); void setAppearance({ locale: next }) }}
@@ -197,7 +194,7 @@ export function AppShell() {
               switchToSpanishLabel={t.languageSwitchToSpanish}
               switchToDarkLabel={t.switchToDarkMode}
               switchToLightLabel={t.switchToLightMode}
-            /></div>
+            />
           </div>
           <div>
             <p className="eyebrow">{t.appName}</p>

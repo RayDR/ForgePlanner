@@ -10,7 +10,6 @@ import type { ForgePlan, PlanTemplateKey, PlanningMode } from '../types/forgePla
 import { Button } from '../ui/Button'
 import { Card } from '../ui/Card'
 import { IconButton } from '../ui/IconButton'
-import { LocaleThemeControls } from '../ui/LocaleThemeControls'
 import { PlanSavingsConfig } from '../ui/PlanSavingsConfig'
 import { PlanCategoryEditor } from '../ui/PlanCategoryEditor'
 import type { CategoryMeta } from '../types/roadmap'
@@ -21,7 +20,6 @@ import { PlanInvitations } from '../plans/PlanInvitations'
 import { PlanSharingDialog } from '../plans/PlanSharingDialog'
 import { sharingApi } from '../plans/sharingApi'
 import { planApi } from '../plans/planApi'
-import { NotificationCenter } from '../notifications/NotificationCenter'
 import {
   ArchiveIcon,
   CopyIcon,
@@ -35,8 +33,7 @@ import {
   LockIcon,
   ShareIcon,
 } from '../ui/icons'
-import { AccountMenu } from '../account/AccountMenu'
-import { CollaborationLauncher } from '../plans/CollaborationLauncher'
+import { HeaderActions } from '../layout/HeaderActions'
 
 type PlansFilter = 'active' | 'archived' | 'deleted'
 
@@ -421,7 +418,7 @@ export function PlansHomeView() {
     <div className="app-bg plans-page">
       <div className="shell plans-home-shell">
         <header className="app-header plans-home-header card">
-          <div className="plans-home-topbar">
+          <div className="plans-home-topbar global-app-bar">
             <div className="plans-brand">
               <div className="plans-brand-mark">FP</div>
               <div>
@@ -429,7 +426,7 @@ export function PlansHomeView() {
                 <h1>{t.yourPlans}</h1>
               </div>
             </div>
-            <div className="header-account-controls"><NotificationCenter /><CollaborationLauncher /><AccountMenu /><LocaleThemeControls
+            <HeaderActions
               locale={locale}
               theme={theme}
               onToggleLocale={() => { const next = locale === 'es' ? 'en' : 'es'; setLocale(next); void setAppearance({ locale: next }) }}
@@ -438,7 +435,7 @@ export function PlansHomeView() {
               switchToSpanishLabel={t.languageSwitchToSpanish}
               switchToDarkLabel={t.switchToDarkMode}
               switchToLightLabel={t.switchToLightMode}
-            /></div>
+            />
           </div>
         </header>
 
