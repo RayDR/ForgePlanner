@@ -7,9 +7,10 @@ interface ModalProps extends PropsWithChildren {
   actions?: ReactNode
   headerActions?: ReactNode
   closeLabel?: ReactNode
+  closeAriaLabel?: string
 }
 
-export function Modal({ open, title, onClose, actions, headerActions, closeLabel = 'Close', children }: ModalProps) {
+export function Modal({ open, title, onClose, actions, headerActions, closeLabel = 'Close', closeAriaLabel = 'Close modal', children }: ModalProps) {
   if (!open) {
     return null
   }
@@ -21,7 +22,7 @@ export function Modal({ open, title, onClose, actions, headerActions, closeLabel
           <h2>{title}</h2>
           <div className="modal-header-actions">
             {headerActions}
-            <button className="btn btn-ghost modal-close-button" onClick={onClose} aria-label="Close modal">{closeLabel}</button>
+            <button className="btn btn-ghost modal-close-button" onClick={onClose} aria-label={closeAriaLabel}>{closeLabel}</button>
           </div>
         </header>
         <div className="modal-body">{children}</div>

@@ -44,7 +44,7 @@ export function ActivityModal() {
   )
 
   const [subtaskDraft, setSubtaskDraft] = useState('')
-  const [commentAuthor, setCommentAuthor] = useState('You')
+  const [commentAuthor, setCommentAuthor] = useState('')
   const [commentMessage, setCommentMessage] = useState('')
   const [activityTab, setActivityTab] = useState<'all' | 'comments' | 'history' | 'worklog'>('comments')
   const [visibleItems, setVisibleItems] = useState(3)
@@ -66,7 +66,7 @@ export function ActivityModal() {
     // Reset editor state when a different persisted activity is opened.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setSubtaskDraft(parsedDraft?.subtask ?? '')
-    setCommentAuthor(parsedDraft?.author ?? 'You')
+    setCommentAuthor(parsedDraft?.author ?? '')
     setCommentMessage(parsedDraft?.comment ?? '')
     setActivityTab('comments')
     setVisibleItems(3)
@@ -112,6 +112,9 @@ export function ActivityModal() {
     const linked = activities.find((item) => item.id === id)
     return linked ? [linked] : []
   })
+  const relationshipModeLabel = locale === 'es'
+    ? ({ independent: 'Independiente', 'soft-linked': 'Vinculación flexible', 'locked-sequence': 'Secuencia bloqueada' }[activity.relationshipMode] ?? activity.relationshipMode)
+    : ({ independent: 'Independent', 'soft-linked': 'Soft linked', 'locked-sequence': 'Locked sequence' }[activity.relationshipMode] ?? activity.relationshipMode)
   const worklog = activity.history.filter((entry) => entry.type === 'monthly-entry-updated' || entry.type === 'subtask-created' || entry.type === 'subtask-updated' || entry.type === 'subtask-completed')
   const allActivityItems = [
     ...activity.comments.map((comment) => ({ id: `comment-${comment.id}`, kind: 'comment' as const, occurredAt: comment.createdAt, title: comment.author, message: comment.message })),
@@ -158,7 +161,7 @@ export function ActivityModal() {
     }
 
     addComment(currentActivity.id, {
-      author: commentAuthor.trim() || 'You',
+      author: commentAuthor.trim() || (locale === 'es' ? 'Tú' : 'You'),
       message: commentMessage,
     })
     setCommentMessage('')
@@ -179,6 +182,7 @@ export function ActivityModal() {
       title={activity.title}
       onClose={closeActivity}
       closeLabel="×"
+      closeAriaLabel={locale === 'es' ? 'Cerrar modal' : 'Close modal'}
       headerActions={<>
         <button type="button" className="btn btn-ghost activity-header-action" onClick={openMonthlyPlanner} disabled={!planId} aria-label={t.openPlanner} title={t.openPlanner}><CalendarIcon width={18} height={18} /></button>
         <div className="activity-settings-wrap">
@@ -194,7 +198,7 @@ export function ActivityModal() {
             {activity.recurrence ? <label className="field-wrap"><span>{t.repeatUntil}</span><input className="field-input" type="date" min={activity.startDate} max={project.endDate} value={activity.recurrence.endDate} onChange={(event) => updateActivity(activity.id, { recurrence: { ...activity.recurrence!, endDate: event.target.value } })} /></label> : null}
             <label className="progress-mode-toggle"><input type="checkbox" checked={usesWeightedProgress} onChange={(event) => updateActivity(activity.id, { progressMode: event.target.checked ? 'weighted' : 'completion' })} /><span>{t.weighting}</span></label>
             <span className="settings-label">{t.color}</span>
-            <div className="color-palette color-palette-compact">{COLOR_OPTIONS.map((colorKey) => <button key={colorKey} type="button" className={activity.colorKey === colorKey ? `color-dot color-dot-${colorKey} is-active` : `color-dot color-dot-${colorKey}`} onClick={() => updateActivity(activity.id, { colorKey })} aria-label={`Set color ${colorKey}`} />)}</div>
+            <div className="color-palette color-palette-compact">{COLOR_OPTIONS.map((colorKey) => <button key={colorKey} type="button" className={activity.colorKey === colorKey ? `color-dot color-dot-${colorKey} is-active` : `color-dot color-dot-${colorKey}`} onClick={() => updateActivity(activity.id, { colorKey })} aria-label={`${t.setColor}: ${colorKey}`} />)}</div>
           </div> : null}
         </div>
       </>}
@@ -235,7 +239,7 @@ export function ActivityModal() {
 
         <section className="activity-panel-grid">
           <aside className={sidebarCollapsed ? 'activity-sidebar-stack is-collapsed' : 'activity-sidebar-stack'}>
-          <button type="button" className="activity-sidebar-toggle" aria-label={sidebarCollapsed ? 'Open task sidebar' : 'Close task sidebar'} aria-expanded={!sidebarCollapsed} onClick={() => setSidebarCollapsed((collapsed) => !collapsed)}>
+          <button type="button" className="activity-sidebar-toggle" aria-label={sidebarCollapsed ? t.openSidebar : t.closeSidebar} aria-expanded={!sidebarCollapsed} onClick={() => setSidebarCollapsed((collapsed) => !collapsed)}>
             <ChevronRightIcon width={18} height={18} />
           </button>
           <div className="activity-status-control">
@@ -252,10 +256,10 @@ export function ActivityModal() {
               <ChevronDownIcon width={14} height={14} />
             </summary>
             <div className="activity-info-grid">
-              <section className="overview-section"><h4>Project timing</h4><dl><div><dt>Planned end</dt><dd>{plannedEndDate}</dd></div><div><dt>Actual end</dt><dd>{actualEndDate}</dd></div><div><dt>Completed</dt><dd>{project.completedAt ?? 'Not completed'}</dd></div></dl>{projectIsExtended ? <p className="activity-highlight">Plan extended beyond the planned end date.</p> : null}</section>
-              <section className="overview-section"><h4>Activity details</h4><dl><div><dt>Start date</dt><dd>{activity.startDate}</dd></div><div><dt>End date</dt><dd>{activity.endDate ?? 'Open ended'}</dd></div><div><dt>Estimated hours</dt><dd>{activity.estimatedHours ?? 0}</dd></div><div><dt>Budget impact</dt><dd>{activity.budgetImpact ?? 0}</dd></div><div><dt>Savings impact</dt><dd>{activity.savingsImpact ?? 0}</dd></div></dl></section>
-              <section className="overview-section"><h4>Relationships</h4><dl><div><dt>Mode</dt><dd>{activity.relationshipMode}</dd></div><div><dt>Dependencies</dt><dd>{activity.dependencyIds.length ? activity.dependencyIds.join(', ') : 'None'}</dd></div><div><dt>Linked tasks</dt><dd>{linkedActivities.length ? linkedActivities.map((linked) => linked.title).join(', ') : 'None'}</dd></div><div><dt>Sequence group</dt><dd>{activity.sequenceGroupId ?? 'None'}</dd></div><div><dt>Parent goal</dt><dd>{activity.parentGoalId ?? 'None'}</dd></div></dl></section>
-              <section className="overview-section"><h4>Monthly timeline</h4><dl>{monthIds.map((monthId) => { const entry = activity.monthlyEntries[monthId]; return <div key={monthId}><dt>{monthId}</dt><dd>{entry.status} · {calculatedProgress}%</dd></div> })}</dl></section>
+              <section className="overview-section"><h4>{t.projectTiming}</h4><dl><div><dt>{t.plannedEnd}</dt><dd>{plannedEndDate}</dd></div><div><dt>{t.actualEnd}</dt><dd>{actualEndDate}</dd></div><div><dt>{t.completed}</dt><dd>{project.completedAt ?? t.notCompleted}</dd></div></dl>{projectIsExtended ? <p className="activity-highlight">{t.extended}</p> : null}</section>
+              <section className="overview-section"><h4>{t.details}</h4><dl><div><dt>{t.startDate}</dt><dd>{activity.startDate}</dd></div><div><dt>{t.endDate}</dt><dd>{activity.endDate ?? t.openEnded}</dd></div><div><dt>{t.hours}</dt><dd>{activity.estimatedHours ?? 0}</dd></div><div><dt>{t.budget}</dt><dd>{activity.budgetImpact ?? 0}</dd></div><div><dt>{t.savings}</dt><dd>{activity.savingsImpact ?? 0}</dd></div></dl></section>
+              <section className="overview-section"><h4>{t.relationships}</h4><dl><div><dt>{t.mode}</dt><dd>{relationshipModeLabel}</dd></div><div><dt>{t.dependencies}</dt><dd>{activity.dependencyIds.length ? activity.dependencyIds.join(', ') : t.none}</dd></div><div><dt>{t.linked}</dt><dd>{linkedActivities.length ? linkedActivities.map((linked) => linked.title).join(', ') : t.none}</dd></div><div><dt>{t.sequence}</dt><dd>{activity.sequenceGroupId ?? t.none}</dd></div><div><dt>{t.parent}</dt><dd>{activity.parentGoalId ?? t.none}</dd></div></dl></section>
+              <section className="overview-section"><h4>{t.timeline}</h4><dl>{monthIds.map((monthId) => { const entry = activity.monthlyEntries[monthId]; return <div key={monthId}><dt>{monthId}</dt><dd>{entry.status} · {calculatedProgress}%</dd></div> })}</dl></section>
             </div>
           </details>
           </div>
@@ -266,7 +270,7 @@ export function ActivityModal() {
           <article className="activity-panel activity-main-subtasks">
             <div className="panel-header">
               <div>
-                <h3>Subtasks</h3>
+                <h3>{t.subtasks}</h3>
               </div>
             </div>
 
@@ -274,67 +278,67 @@ export function ActivityModal() {
               {activity.subtasks.map((subtask) => (
                 <li key={subtask.id} className={draggedSubtaskId === subtask.id ? 'subtask-row is-dragging' : 'subtask-row'} draggable onDragStart={(event) => { setDraggedSubtaskId(subtask.id); event.dataTransfer.effectAllowed = 'move' }} onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = 'move' }} onDrop={(event) => { event.preventDefault(); dropSubtask(subtask.id) }} onDragEnd={() => setDraggedSubtaskId(null)}>
                   <div className="subtask-row-main">
-                    <button type="button" className={subtask.completed ? 'subtask-complete is-complete' : 'subtask-complete'} aria-label={subtask.completed ? 'Mark subtask incomplete' : 'Mark subtask complete'} aria-pressed={subtask.completed} onClick={() => toggleSubtask(activity.id, subtask.id, !subtask.completed)}>{subtask.completed ? '✓' : ''}</button>
+                    <button type="button" className={subtask.completed ? 'subtask-complete is-complete' : 'subtask-complete'} aria-label={subtask.completed ? t.markIncomplete : t.markComplete} aria-pressed={subtask.completed} onClick={() => toggleSubtask(activity.id, subtask.id, !subtask.completed)}>{subtask.completed ? '✓' : ''}</button>
                     <input
                       className="field-input field-input-inline"
                       value={subtask.title}
                       onChange={(event) => editSubtask(activity.id, subtask.id, event.target.value)}
                     />
                     {usesWeightedProgress ? (
-                      <label className="subtask-points" title="Ponderación">
-                        <span>Peso</span>
+                      <label className="subtask-points" title={t.weighting}>
+                        <span>{locale === 'es' ? 'Peso' : 'Weight'}</span>
                         <input type="number" min={1} max={100} value={subtask.weight ?? 1} onChange={(event) => updateSubtaskWeight(activity.id, subtask.id, Number(event.target.value || 1))} />
                       </label>
                     ) : null}
                   </div>
                   <div className="subtask-actions-wrap">
-                    <button className="btn btn-ghost subtask-actions-trigger" type="button" onClick={() => setSubtaskActionsId((id) => id === subtask.id ? null : subtask.id)} aria-label="Subtask actions" aria-expanded={subtaskActionsId === subtask.id}><MoreVerticalIcon width={16} height={16} /></button>
-                    {subtaskActionsId === subtask.id ? <div className="subtask-actions-menu"><button type="button" onClick={() => { addSubtask(activity.id, `${subtask.title} copy`); setSubtaskActionsId(null) }}>Duplicate</button><button type="button" onClick={() => { void navigator.clipboard.writeText(subtask.title); setSubtaskActionsId(null) }}>Copy text</button><button type="button" className="is-danger" onClick={() => { deleteSubtask(activity.id, subtask.id); setSubtaskActionsId(null) }}><Trash2Icon width={13} height={13} /> Delete</button></div> : null}
+                    <button className="btn btn-ghost subtask-actions-trigger" type="button" onClick={() => setSubtaskActionsId((id) => id === subtask.id ? null : subtask.id)} aria-label={t.actions} aria-expanded={subtaskActionsId === subtask.id}><MoreVerticalIcon width={16} height={16} /></button>
+                    {subtaskActionsId === subtask.id ? <div className="subtask-actions-menu"><button type="button" onClick={() => { addSubtask(activity.id, `${subtask.title} ${locale === 'es' ? 'copia' : 'copy'}`); setSubtaskActionsId(null) }}>{t.duplicate}</button><button type="button" onClick={() => { void navigator.clipboard.writeText(subtask.title); setSubtaskActionsId(null) }}>{t.copy}</button><button type="button" className="is-danger" onClick={() => { deleteSubtask(activity.id, subtask.id); setSubtaskActionsId(null) }}><Trash2Icon width={13} height={13} /> {t.delete}</button></div> : null}
                   </div>
                 </li>
               ))}
             </ul>
             <div className="activity-inline-form">
-              <button type="button" className="btn btn-ghost" onClick={handleAddSubtask} aria-label="Add subtask"><PlusIcon width={16} height={16} /></button>
-              <input ref={subtaskDraftRef} className="field-input field-input-inline" placeholder="Name this subtask" value={subtaskDraft} onChange={(event) => setSubtaskDraft(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') handleAddSubtask() }} />
+              <button type="button" className="btn btn-ghost" onClick={handleAddSubtask} aria-label={t.addSubtask}><PlusIcon width={16} height={16} /></button>
+              <input ref={subtaskDraftRef} className="field-input field-input-inline" placeholder={t.addSubtask} value={subtaskDraft} onChange={(event) => setSubtaskDraft(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') handleAddSubtask() }} />
             </div>
             <div className="activity-linked-work">
-              <h3>Linked tasks</h3>
-              {linkedActivities.map((linked) => <div className="linked-task-row" key={linked.id}><span>{linked.title}</span><button type="button" className="btn btn-ghost" onClick={() => updateActivity(activity.id, { linkedActivityIds: activity.linkedActivityIds.filter((id) => id !== linked.id) })}>Remove</button></div>)}
+              <h3>{t.linked}</h3>
+              {linkedActivities.map((linked) => <div className="linked-task-row" key={linked.id}><span>{linked.title}</span><button type="button" className="btn btn-ghost" onClick={() => updateActivity(activity.id, { linkedActivityIds: activity.linkedActivityIds.filter((id) => id !== linked.id) })}>{t.remove}</button></div>)}
               <div className="linked-task-search">
-                <input className="field-input" type="search" value={linkedTaskQuery} placeholder="Search existing tasks" autoComplete="off" onFocus={() => setLinkedSearchOpen(true)} onChange={(event) => { setLinkedTaskQuery(event.target.value); setLinkedSearchOpen(true) }} onKeyDown={(event) => { if (event.key === 'Escape') setLinkedSearchOpen(false) }} />
-                {linkedSearchOpen && normalizedLinkedQuery.length >= 2 ? <div className="linked-task-results">{linkedCandidates.length ? linkedCandidates.map((candidate) => <button key={candidate.id} type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => linkActivity(candidate.id)}><strong>{candidate.title}</strong><small>{candidate.description || 'No description'}</small></button>) : <p>No matching tasks</p>}</div> : null}
+                <input className="field-input" type="search" value={linkedTaskQuery} placeholder={t.searchTasks} autoComplete="off" onFocus={() => setLinkedSearchOpen(true)} onChange={(event) => { setLinkedTaskQuery(event.target.value); setLinkedSearchOpen(true) }} onKeyDown={(event) => { if (event.key === 'Escape') setLinkedSearchOpen(false) }} />
+                {linkedSearchOpen && normalizedLinkedQuery.length >= 2 ? <div className="linked-task-results">{linkedCandidates.length ? linkedCandidates.map((candidate) => <button key={candidate.id} type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => linkActivity(candidate.id)}><strong>{candidate.title}</strong><small>{candidate.description || t.noDescription}</small></button>) : <p>{t.noMatches}</p>}</div> : null}
               </div>
             </div>
           </article>
 
           <article className="activity-panel activity-main-comments">
             <div className="panel-header">
-              <h3>Activity</h3>
+              <h3>{t.activity}</h3>
               <LockIcon width={14} height={14} />
             </div>
             <div className="activity-tabs" role="tablist">
               {(['all', 'comments', 'history', 'worklog'] as const).map((tab) => (
                 <button key={tab} type="button" role="tab" aria-selected={activityTab === tab} className={activityTab === tab ? 'is-active' : ''} onClick={() => { setActivityTab(tab); setVisibleItems(3) }}>
-                  {tab === 'worklog' ? 'Work log' : tab[0].toUpperCase() + tab.slice(1)}
+                  {t[tab]}
                 </button>
               ))}
             </div>
             {activityTab === 'comments' ? <>
             <div className="form-grid form-grid-compact activity-comment-form">
               <label className="field-wrap">
-                <span>Author</span>
+                <span>{t.author}</span>
                 <input className="field-input" value={commentAuthor} onChange={(event) => setCommentAuthor(event.target.value)} />
               </label>
               <label className="field-wrap activity-comment-message">
-                <span>Message</span>
+                <span>{t.message}</span>
                 <input className="field-input" value={commentMessage} onChange={(event) => setCommentMessage(event.target.value)} />
               </label>
               <div className="field-wrap activity-comment-submit">
                 <span>&nbsp;</span>
                 <button className="btn btn-secondary" type="button" onClick={handleAddComment}>
                   <PlusIcon width={14} height={14} />
-                  <span>Add comment</span>
+                  <span>{t.addComment}</span>
                 </button>
               </div>
             </div>
@@ -347,7 +351,7 @@ export function ActivityModal() {
                     <p>{comment.message}</p>
                     <small>{new Date(comment.createdAt).toLocaleString()}</small>
                   </div>
-                  <button className="btn btn-ghost" type="button" onClick={() => deleteComment(activity.id, comment.id)} aria-label="Delete comment">
+                  <button className="btn btn-ghost" type="button" onClick={() => deleteComment(activity.id, comment.id)} aria-label={t.delete}>
                     <Trash2Icon width={14} height={14} />
                   </button>
                 </li>
@@ -358,7 +362,7 @@ export function ActivityModal() {
               <ul className="history-list activity-all-feed">
                 {allActivityItems.slice(0, visibleItems).map((item) => (
                   <li key={item.id} className="history-row">
-                    <span className={`badge badge-${item.kind === 'comment' ? 'blue' : activity.colorKey}`}>{item.kind === 'comment' ? 'comment' : item.title}</span>
+                    <span className={`badge badge-${item.kind === 'comment' ? 'blue' : activity.colorKey}`}>{item.kind === 'comment' ? t.comments : item.title}</span>
                     <div><p>{item.kind === 'comment' ? <><strong>{item.title}: </strong>{item.message}</> : item.message}</p><small>{new Date(item.occurredAt).toLocaleString()}</small></div>
                   </li>
                 ))}
@@ -376,7 +380,7 @@ export function ActivityModal() {
               </ul>
             ) : null}
             {(activityTab === 'comments' && activity.comments.length > visibleItems) || (activityTab === 'all' && allActivityItems.length > visibleItems) || (activityTab === 'history' && activity.history.length > visibleItems) || (activityTab === 'worklog' && worklog.length > visibleItems) ? (
-              <button type="button" className="btn btn-ghost activity-read-more" onClick={() => setVisibleItems((count) => count + 3)}>Read more</button>
+              <button type="button" className="btn btn-ghost activity-read-more" onClick={() => setVisibleItems((count) => count + 3)}>{t.readMore}</button>
             ) : null}
           </article>
         </section>

@@ -15,19 +15,27 @@ import { PlanSavingsConfig } from '../ui/PlanSavingsConfig'
 import { PlanCategoryEditor } from '../ui/PlanCategoryEditor'
 import type { CategoryMeta } from '../types/roadmap'
 import { getCategoryMeta } from '../data/northstarMockData'
+import { useSession } from '../auth/SessionProvider'
+import { LocalPlanMigration } from '../plans/LocalPlanMigration'
+import { PlanInvitations } from '../plans/PlanInvitations'
+import { PlanSharingDialog } from '../plans/PlanSharingDialog'
+import { sharingApi } from '../plans/sharingApi'
+import { planApi } from '../plans/planApi'
+import { NotificationCenter } from '../notifications/NotificationCenter'
 import {
   ArchiveIcon,
   CopyIcon,
   DownloadIcon,
-  EyeOffIcon,
   MoreVerticalIcon,
   PencilIcon,
   PlusIcon,
   TrashIcon,
   ChevronUpIcon,
+  UsersIcon,
+  LockIcon,
 } from '../ui/icons'
 
-type PlansFilter = 'active' | 'hidden' | 'archived' | 'deleted'
+type PlansFilter = 'active' | 'archived' | 'deleted'
 
 interface PlanDraft {
   title: string
@@ -131,14 +139,18 @@ function downloadJson(filename: string, payload: unknown) {
   URL.revokeObjectURL(url)
 }
 
-function PlanPreviewCarousel({ plan, years, onOpenYear, onOpenMonth }: {
+function PlanPreviewCarousel({ plan, years, locale, onOpenYear, onOpenMonth }: {
   plan: ForgePlan
   years: PlanPreviewYear[]
+  locale: 'es' | 'en'
   onOpenYear: (plan: ForgePlan, year: number) => void
   onOpenMonth: (plan: ForgePlan, monthId: string) => void
 }) {
   const todayId = new Date().toISOString().slice(0, 7)
-  const previewLocale = plan.snapshot.locale === 'es' ? 'es-MX' : 'en-US'
+  const previewLocale = locale === 'es' ? 'es-MX' : 'en-US'
+  const labels = locale === 'es'
+    ? { empty: 'Sin periodos activos', previous: 'Anterior', next: 'Siguiente', activities: 'actividades', noActivities: 'Sin actividades todavía', items: 'elementos' }
+    : { empty: 'No active periods', previous: 'Previous', next: 'Next', activities: 'activities', noActivities: 'No activities yet', items: 'items' }
   const monthLabel = (monthId: string) => new Intl.DateTimeFormat(previewLocale, { month: 'short', timeZone: 'UTC' }).format(new Date(`${monthId}-01T00:00:00Z`)).replace('.', '')
   const activeMonths = years.flatMap((year) => year.months.filter((month) => month.active).map((month) => ({ ...month, year: year.year })))
   const initialYearIndex = Math.max(0, years.findIndex((year) => year.year >= Number(todayId.slice(0, 4))))
@@ -149,24 +161,24 @@ function PlanPreviewCarousel({ plan, years, onOpenYear, onOpenMonth }: {
   const year = years[safeIndex]
   const month = activeMonths[safeIndex]
 
-  if (!itemCount) return <div className="plan-preview-empty">Sin periodos activos</div>
+  if (!itemCount) return <div className="plan-preview-empty">{labels.empty}</div>
 
   return (
     <div className="plan-preview-carousel">
-      <button type="button" className="plan-preview-arrow" aria-label="Anterior" disabled={safeIndex === 0} onClick={() => setIndex((current) => Math.max(0, current - 1))}>‹</button>
+      <button type="button" className="plan-preview-arrow" aria-label={labels.previous} disabled={safeIndex === 0} onClick={() => setIndex((current) => Math.max(0, current - 1))}>‹</button>
       <div className="plan-preview-single">
         {plan.planningMode === 'monthly' && month ? (
           <button type="button" className="plan-preview-month-detail" onClick={() => onOpenMonth(plan, month.id)}>
             <strong>{month.label} {month.year}</strong>
-            <span>{month.count} actividades · {month.progress}%</span>
-            <small>{plan.snapshot.activities.filter((activity) => activity.monthlyEntries[month.id]).slice(0, 3).map((activity) => activity.title).join(' · ') || 'Sin actividades todavía'}</small>
+            <span>{month.count} {labels.activities} · {month.progress}%</span>
+            <small>{plan.snapshot.activities.filter((activity) => activity.monthlyEntries[month.id]).slice(0, 3).map((activity) => activity.title).join(' · ') || labels.noActivities}</small>
           </button>
         ) : year ? (
           <div className="plan-preview-year-single">
             <button type="button" className="plan-preview-single__year" onClick={() => onOpenYear(plan, year.year)}>{year.year}</button>
             <div className="plan-preview-month-grid">
               {year.months.map((entry) => (
-                <button key={entry.id} type="button" className={`plan-preview-month plan-preview-month--${entry.count ? 2 : 0} ${entry.active && entry.count ? '' : 'is-locked'}`} aria-label={`${monthLabel(entry.id)}: ${entry.count} elementos`} title={`${entry.count} elementos`} onClick={() => onOpenMonth(plan, entry.id)}>
+                <button key={entry.id} type="button" className={`plan-preview-month plan-preview-month--${entry.count ? 2 : 0} ${entry.active && entry.count ? '' : 'is-locked'}`} aria-label={`${monthLabel(entry.id)}: ${entry.count} ${labels.items}`} title={`${entry.count} ${labels.items}`} onClick={() => onOpenMonth(plan, entry.id)}>
                   <span>{monthLabel(entry.id)}</span><small className="plan-preview-count">{entry.count}</small>
                 </button>
               ))}
@@ -175,12 +187,13 @@ function PlanPreviewCarousel({ plan, years, onOpenYear, onOpenMonth }: {
         ) : null}
         <span className="plan-preview-position">{safeIndex + 1} / {itemCount}</span>
       </div>
-      <button type="button" className="plan-preview-arrow" aria-label="Siguiente" disabled={safeIndex >= itemCount - 1} onClick={() => setIndex((current) => Math.min(itemCount - 1, current + 1))}>›</button>
+      <button type="button" className="plan-preview-arrow" aria-label={labels.next} disabled={safeIndex >= itemCount - 1} onClick={() => setIndex((current) => Math.min(itemCount - 1, current + 1))}>›</button>
     </div>
   )
 }
 
 export function PlansHomeView() {
+  const { setAppearance, session } = useSession()
   const navigate = useNavigate()
   const locale = useRoadmapStore((state) => state.locale)
   const theme = useRoadmapStore((state) => state.theme)
@@ -189,18 +202,19 @@ export function PlansHomeView() {
   const setSelectedYear = useRoadmapStore((state) => state.setSelectedYear)
   const plans = useForgePlannerStore((state) => state.plans)
   const archivedPlanIds = useForgePlannerStore((state) => state.archivedPlanIds)
-  const hiddenPlanIds = useForgePlannerStore((state) => state.hiddenPlanIds)
   const deletedPlans = useForgePlannerStore((state) => state.deletedPlans)
   const openPlan = useForgePlannerStore((state) => state.openPlan)
   const quickEditPlan = useForgePlannerStore((state) => state.quickEditPlan)
   const duplicatePlan = useForgePlannerStore((state) => state.duplicatePlan)
-  const hidePlan = useForgePlannerStore((state) => state.hidePlan)
-  const unhidePlan = useForgePlannerStore((state) => state.unhidePlan)
   const archivePlan = useForgePlannerStore((state) => state.archivePlan)
   const unarchivePlan = useForgePlannerStore((state) => state.unarchivePlan)
   const deletePlan = useForgePlannerStore((state) => state.deletePlan)
   const restoreDeletedPlan = useForgePlannerStore((state) => state.restoreDeletedPlan)
+  const permanentlyDeletePlan = useForgePlannerStore((state) => state.permanentlyDeletePlan)
+  const clearDeletedPlans = useForgePlannerStore((state) => state.clearDeletedPlans)
   const createPlan = useForgePlannerStore((state) => state.createPlan)
+  const mergeRemotePlans = useForgePlannerStore((state) => state.mergeRemotePlans)
+  const setRemoteSharingEnabled = useForgePlannerStore((state) => state.setRemoteSharingEnabled)
 
   const [openMenuId, setOpenMenuId] = useState<string | null>(null)
   const [quickEditTarget, setQuickEditTarget] = useState<ForgePlan | null>(null)
@@ -211,17 +225,20 @@ export function PlansHomeView() {
   const menuRef = useRef<HTMLDivElement | null>(null)
   const plansScrollerRef = useRef<HTMLElement | null>(null)
   const undoTimerRef = useRef<number | null>(null)
+  const remoteDeleteTasksRef = useRef(new Map<string, Promise<void>>())
   const touchStartXRef = useRef<number | null>(null)
   const [showBackToTop, setShowBackToTop] = useState(false)
   const [undoDelete, setUndoDelete] = useState<{ deletedId: string; title: string } | null>(null)
+  const [sharingPlan, setSharingPlan] = useState<ForgePlan | null>(null)
+  const [confirmClearDeleted, setConfirmClearDeleted] = useState(false)
 
   const t = copy[locale]
   const activePlans = useMemo(
-    () => plans.filter((plan) => !archivedPlanIds.includes(plan.id) && !hiddenPlanIds.includes(plan.id)),
-    [plans, archivedPlanIds, hiddenPlanIds],
+    () => plans.filter((plan) => !archivedPlanIds.includes(plan.id)),
+    [plans, archivedPlanIds],
   )
-  const hiddenPlans = useMemo(() => plans.filter((plan) => hiddenPlanIds.includes(plan.id)), [plans, hiddenPlanIds])
   const archivedPlans = useMemo(() => plans.filter((plan) => archivedPlanIds.includes(plan.id)), [plans, archivedPlanIds])
+  const accountInitials = (session?.user.profile?.displayName ?? session?.user.email ?? 'NS').trim().split(/\s+/).slice(0, 2).map((part) => part[0]?.toUpperCase()).join('') || 'NS'
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme)
@@ -340,13 +357,57 @@ export function PlansHomeView() {
     if (undoTimerRef.current) window.clearTimeout(undoTimerRef.current)
     setUndoDelete({ deletedId: deleted.id, title: plan.title })
     undoTimerRef.current = window.setTimeout(() => setUndoDelete(null), 5000)
+    if (plan.remoteId) {
+      const task = planApi.remove(plan.remoteId).catch((reason) => { restoreDeletedPlan(deleted.id); throw reason }).finally(() => remoteDeleteTasksRef.current.delete(deleted.id))
+      remoteDeleteTasksRef.current.set(deleted.id, task)
+      void task.catch(() => undefined)
+    }
   }
 
-  function undoLastDelete() {
+  async function handleArchivePlan(plan: ForgePlan) {
+    archivePlan(plan.id)
+    if (plan.remoteId) await sharingApi.setSharingEnabled(plan.remoteId, false).then(() => setRemoteSharingEnabled(plan.id, false)).catch(() => undefined)
+  }
+
+  async function handleUnarchivePlan(plan: ForgePlan) {
+    unarchivePlan(plan.id)
+  }
+
+  async function togglePlanSharing(plan: ForgePlan) {
+    if (!plan.remoteId) return
+    const enabled = plan.remoteSharingEnabled === false
+    await sharingApi.setSharingEnabled(plan.remoteId, enabled)
+    setRemoteSharingEnabled(plan.id, enabled)
+  }
+
+  async function permanentlyRemove(item: typeof deletedPlans[number]) {
+    if (!window.confirm(locale === 'es' ? `“${item.plan.title}” se eliminará definitivamente. Esta acción no se puede deshacer.` : `“${item.plan.title}” will be permanently deleted. This cannot be undone.`)) return
+    await remoteDeleteTasksRef.current.get(item.id)?.catch(() => undefined)
+    if (item.plan.remoteId) await planApi.purge(item.plan.remoteId)
+    permanentlyDeletePlan(item.id)
+  }
+
+  async function permanentlyRemoveAll() {
+    setConfirmClearDeleted(false)
+    await Promise.all(deletedPlans.map((item) => remoteDeleteTasksRef.current.get(item.id)?.catch(() => undefined)))
+    await Promise.all(deletedPlans.map((item) => item.plan.remoteId ? planApi.purge(item.plan.remoteId) : Promise.resolve()))
+    clearDeletedPlans()
+  }
+
+  async function undoLastDelete() {
     if (!undoDelete) return
+    const deleted = deletedPlans.find((item) => item.id === undoDelete.deletedId)
+    await remoteDeleteTasksRef.current.get(undoDelete.deletedId)?.catch(() => undefined)
     restoreDeletedPlan(undoDelete.deletedId)
+    if (deleted?.plan.remoteId) await planApi.restore(deleted.plan.remoteId).catch(() => undefined)
     if (undoTimerRef.current) window.clearTimeout(undoTimerRef.current)
     setUndoDelete(null)
+  }
+
+  async function restorePlan(item: typeof deletedPlans[number]) {
+    await remoteDeleteTasksRef.current.get(item.id)?.catch(() => undefined)
+    restoreDeletedPlan(item.id)
+    if (item.plan.remoteId) await planApi.restore(item.plan.remoteId).catch(() => undefined)
   }
 
   function dismissUndo() {
@@ -366,23 +427,25 @@ export function PlansHomeView() {
                 <h1>{t.yourPlans}</h1>
               </div>
             </div>
-            <LocaleThemeControls
+            <div className="header-account-controls"><NotificationCenter /><IconButton label={t.collaborationAndGroups} onClick={() => navigate('/collaboration')}><UsersIcon width={19} height={19} /></IconButton><button type="button" className="account-avatar-button" onClick={() => navigate('/account')} aria-label={t.myAccount} title={session?.user.profile?.displayName ?? session?.user.email}>{accountInitials}</button><LocaleThemeControls
               locale={locale}
               theme={theme}
-              onToggleLocale={() => setLocale(locale === 'es' ? 'en' : 'es')}
-              onToggleTheme={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+              onToggleLocale={() => { const next = locale === 'es' ? 'en' : 'es'; setLocale(next); void setAppearance({ locale: next }) }}
+              onToggleTheme={() => { const next = theme === 'dark' ? 'light' : 'dark'; setTheme(next); void setAppearance({ theme: next }) }}
               switchToEnglishLabel={t.languageSwitchToEnglish}
               switchToSpanishLabel={t.languageSwitchToSpanish}
               switchToDarkLabel={t.switchToDarkMode}
               switchToLightLabel={t.switchToLightMode}
-            />
+            /></div>
           </div>
         </header>
 
-        <nav className="plans-filter-tabs" aria-label="Filtrar planes">
+        <LocalPlanMigration />
+        <PlanInvitations locale={locale} onAccepted={() => { void planApi.list().then(mergeRemotePlans) }} />
+
+        <nav className="plans-filter-tabs" aria-label={locale === 'es' ? 'Filtrar planes' : 'Filter plans'}>
           {([
             ['active', t.yourPlans, activePlans.length],
-            ['hidden', t.hidden, hiddenPlans.length],
             ['archived', t.archived, archivedPlans.length],
             ['deleted', t.recentlyDeleted, deletedPlans.length],
           ] as const).map(([filter, label, count]) => (
@@ -416,7 +479,8 @@ export function PlansHomeView() {
                     <header className="plan-card__header">
                       <div className="plan-card__title-block">
                         <p className="plan-card__kicker">{plan.planningMode === 'monthly' ? t.monthlyView : t.annualView}</p>
-                        <h2 onDoubleClick={(event) => editPlan(event, plan)} title="Doble clic para editar">{plan.title}</h2>
+                        <h2 onDoubleClick={(event) => editPlan(event, plan)} title={locale === 'es' ? 'Doble clic para editar' : 'Double-click to edit'}>{plan.title}</h2>
+                        {plan.remoteAccess && plan.remoteAccess !== 'owner' ? <span className="plan-access-badge">{plan.remoteAccess === 'editor' ? (locale === 'es' ? 'Compartido · editor' : 'Shared · editor') : (locale === 'es' ? 'Compartido · lectura' : 'Shared · view')}</span> : null}
                       </div>
                       <div className="plan-card__actions" ref={openMenuId === plan.id ? menuRef : undefined}>
                         <IconButton label={t.menu} onClick={(event) => {
@@ -427,21 +491,22 @@ export function PlansHomeView() {
                         </IconButton>
                         {openMenuId === plan.id ? (
                           <div className="plan-card__menu" onClick={(event) => event.stopPropagation()}>
-                            <button type="button" onClick={() => { setQuickEditTarget(plan); closeMenu() }}><PencilIcon width={16} height={16} /> {t.edit}</button>
+                            {plan.remoteAccess !== 'viewer' ? <button type="button" onClick={() => { setQuickEditTarget(plan); closeMenu() }}><PencilIcon width={16} height={16} /> {t.edit}</button> : null}
+                            {plan.remoteAccess === 'owner' && plan.remoteId ? <button type="button" onClick={() => { setSharingPlan(plan); closeMenu() }}>↗ {t.share}</button> : null}
+                            {plan.remoteAccess === 'owner' && plan.remoteId ? <button type="button" onClick={() => { void togglePlanSharing(plan); closeMenu() }}><LockIcon width={16} height={16} /> {plan.remoteSharingEnabled === false ? t.unlockAccess : t.makePrivate}</button> : null}
                             <button type="button" onClick={() => { duplicatePlan(plan.id); closeMenu() }}><CopyIcon width={16} height={16} /> {t.duplicate}</button>
-                            <button type="button" onClick={() => { hidePlan(plan.id); closeMenu() }}><EyeOffIcon width={16} height={16} /> {t.hide}</button>
-                            <button type="button" onClick={() => { archivePlan(plan.id); closeMenu() }}><ArchiveIcon width={16} height={16} /> {t.archive}</button>
+                            {plan.remoteAccess === 'owner' || !plan.remoteAccess ? <button type="button" onClick={() => { void handleArchivePlan(plan); closeMenu() }}><ArchiveIcon width={16} height={16} /> {t.archive}</button> : null}
                             <button type="button" onClick={() => { handleExportPlan(plan); closeMenu() }}><DownloadIcon width={16} height={16} /> {t.export}</button>
-                            <button type="button" className="danger" onClick={() => { handleDeletePlan(plan); closeMenu() }}><TrashIcon width={16} height={16} /> {t.delete}</button>
+                            {plan.remoteAccess === 'owner' || !plan.remoteAccess ? <button type="button" className="danger" onClick={() => { handleDeletePlan(plan); closeMenu() }}><TrashIcon width={16} height={16} /> {t.delete}</button> : null}
                           </div>
                         ) : null}
                       </div>
                     </header>
 
-                    <p className="plan-card__description" onDoubleClick={(event) => editPlan(event, plan)} title="Doble clic para editar">{plan.description || t.noPlans}</p>
+                    <p className="plan-card__description" onDoubleClick={(event) => editPlan(event, plan)} title={locale === 'es' ? 'Doble clic para editar' : 'Double-click to edit'}>{plan.description || t.noPlans}</p>
                     <div className="plan-card__preview-head"><span>{locale === 'es' ? 'Calendario' : 'Calendar'}</span><small>{locale === 'es' ? 'Actualizado' : 'Updated'}: {new Date(plan.updatedAt).toLocaleDateString()}</small></div>
                     <div className="plan-card__preview" onClick={(event) => event.stopPropagation()}>
-                      <PlanPreviewCarousel plan={plan} years={previewYears} onOpenYear={openPlanYear} onOpenMonth={openPlanMonth} />
+                      <PlanPreviewCarousel plan={plan} years={previewYears} locale={locale} onOpenYear={openPlanYear} onOpenMonth={openPlanMonth} />
                     </div>
                     <footer className="plan-card__footer"><span>{locale === 'es' ? 'Finaliza' : 'Ends'}</span><strong>{plan.endDate}</strong></footer>
                   </article>
@@ -469,36 +534,34 @@ export function PlansHomeView() {
 
           {plansFilter !== 'active' ? (
             <section className="filtered-plans-grid" aria-live="polite">
-              {plansFilter === 'hidden' && (hiddenPlans.length ? hiddenPlans.map((plan) => (
-                <Card key={plan.id} className="compact-plan-card filtered-plan-card">
-                  <div><strong>{plan.title}</strong><p>{plan.description || t.noHidden}</p></div>
-                  <IconButton label={t.unhide} onClick={() => unhidePlan(plan.id)}><EyeOffIcon width={16} height={16} /></IconButton>
-                </Card>
-              )) : <div className="empty-state">{t.noHidden}</div>)}
               {plansFilter === 'archived' && (archivedPlans.length ? archivedPlans.map((plan) => (
                 <Card key={plan.id} className="compact-plan-card filtered-plan-card">
-                  <div><strong>{plan.title}</strong><p>{plan.description || t.noArchived}</p></div>
-                  <IconButton label={t.unarchive} onClick={() => unarchivePlan(plan.id)}><ArchiveIcon width={16} height={16} /></IconButton>
+                  <div><strong>{plan.title}</strong><small>{plan.endDate}</small></div>
+                  <div className="compact-plan-card__actions">
+                    {plan.remoteId && (plan.remoteAccess === 'owner' || !plan.remoteAccess) ? <><IconButton label={t.manageAccess} onClick={() => setSharingPlan(plan)}><UsersIcon width={16} height={16} /></IconButton><IconButton label={plan.remoteSharingEnabled === false ? t.unlockAccess : t.makePrivate} onClick={() => void togglePlanSharing(plan)}><LockIcon width={16} height={16} /></IconButton></> : null}
+                    <IconButton label={t.unarchive} onClick={() => void handleUnarchivePlan(plan)}><ArchiveIcon width={16} height={16} /></IconButton>
+                    <IconButton label={t.delete} onClick={() => handleDeletePlan(plan)}><TrashIcon width={16} height={16} /></IconButton>
+                  </div>
                 </Card>
               )) : <div className="empty-state">{t.noArchived}</div>)}
-              {plansFilter === 'deleted' && (deletedPlans.length ? deletedPlans.map((item) => (
-                <Card key={item.id} className="compact-plan-card filtered-plan-card">
-                  <div><strong>{item.plan.title}</strong><p>{item.plan.description || t.noDeleted}</p><small>{item.deletedAt.slice(0, 10)} · {item.expiresAt.slice(0, 10)}</small></div>
-                  <IconButton label={t.restore} onClick={() => restoreDeletedPlan(item.id)}><DownloadIcon width={16} height={16} /></IconButton>
+              {plansFilter === 'deleted' && (deletedPlans.length ? <><div className="filtered-plans-toolbar"><span>{deletedPlans.length} {locale === 'es' ? 'planes eliminados' : 'deleted plans'}</span><button type="button" className="btn btn-danger" onClick={() => setConfirmClearDeleted(true)}>{locale === 'es' ? 'Borrar todo' : 'Delete all'}</button></div>{deletedPlans.map((item) => (
+                <Card key={item.id} className="compact-plan-card filtered-plan-card filtered-plan-card--deleted">
+                  <div><strong>{item.plan.title}</strong><small>{locale === 'es' ? 'Se elimina automáticamente' : 'Automatically removed'}: {item.expiresAt.slice(0, 10)}</small></div>
+                  <div className="compact-plan-card__actions"><IconButton label={t.restore} onClick={() => void restorePlan(item)}><DownloadIcon width={16} height={16} /></IconButton><IconButton label={locale === 'es' ? 'Borrar definitivamente' : 'Delete permanently'} onClick={() => void permanentlyRemove(item)}><TrashIcon width={16} height={16} /></IconButton></div>
                 </Card>
-              )) : <div className="empty-state">{t.noDeleted}</div>)}
+              ))}</> : <div className="empty-state">{t.noDeleted}</div>)}
             </section>
           ) : null}
         </main>
-        {showBackToTop ? <button type="button" className="plans-back-to-top" aria-label="Volver arriba" onClick={() => plansScrollerRef.current?.scrollTo({ top: 0, behavior: 'smooth' })}><ChevronUpIcon width={20} height={20} /></button> : null}
-        <footer className="domoforge-footer">Diseñado y desarrollado por <a href="https://domoforge.com" target="_blank" rel="noreferrer">Domoforge</a></footer>
+        {showBackToTop ? <button type="button" className="plans-back-to-top" aria-label={locale === 'es' ? 'Volver arriba' : 'Back to top'} onClick={() => plansScrollerRef.current?.scrollTo({ top: 0, behavior: 'smooth' })}><ChevronUpIcon width={20} height={20} /></button> : null}
+        <footer className="domoforge-footer">{locale === 'es' ? 'Diseñado y desarrollado por' : 'Designed and developed by'} <a href="https://domoforge.com" target="_blank" rel="noreferrer">Domoforge</a></footer>
       </div>
 
       {undoDelete ? (
         <div className="undo-toast" role="status" onTouchStart={(event) => { touchStartXRef.current = event.touches[0]?.clientX ?? null }} onTouchEnd={(event) => { const endX = event.changedTouches[0]?.clientX; if (touchStartXRef.current !== null && endX !== undefined && Math.abs(endX - touchStartXRef.current) > 60) dismissUndo(); touchStartXRef.current = null }}>
           <span><strong>{undoDelete.title}</strong> {locale === 'es' ? 'se eliminó' : 'was deleted'}</span>
-          <button type="button" className="undo-toast__action" onClick={undoLastDelete}>{locale === 'es' ? 'Deshacer' : 'Undo'}</button>
-          <button type="button" className="undo-toast__close" aria-label="Cerrar" onClick={dismissUndo}>×</button>
+          <button type="button" className="undo-toast__action" onClick={() => void undoLastDelete()}>{locale === 'es' ? 'Deshacer' : 'Undo'}</button>
+          <button type="button" className="undo-toast__close" aria-label={locale === 'es' ? 'Cerrar' : 'Close'} onClick={dismissUndo}>×</button>
           <span className="undo-toast__timer" aria-hidden="true" />
         </div>
       ) : null}
@@ -568,6 +631,10 @@ export function PlansHomeView() {
           </div>
         </div>
       ) : null}
+
+      {sharingPlan ? <PlanSharingDialog plan={sharingPlan} locale={locale} onClose={() => setSharingPlan(null)} /> : null}
+
+      {confirmClearDeleted ? <div className="modal-overlay" role="presentation"><section className="modal-shell compact-dialog" role="dialog" aria-modal="true" aria-labelledby="clear-deleted-title"><header className="modal-header"><h2 id="clear-deleted-title">{locale === 'es' ? 'Borrar todos los planes' : 'Delete all plans'}</h2><button className="btn btn-ghost" onClick={() => setConfirmClearDeleted(false)} aria-label={locale === 'es' ? 'Cerrar' : 'Close'}>×</button></header><div className="modal-body"><p>{locale === 'es' ? 'Todos los planes eliminados se borrarán definitivamente y no podrán recuperarse.' : 'All deleted plans will be permanently erased and cannot be recovered.'}</p></div><footer className="modal-footer"><button className="btn" onClick={() => setConfirmClearDeleted(false)}>{t.cancel}</button><button className="btn btn-danger" onClick={() => void permanentlyRemoveAll()}>{locale === 'es' ? 'Borrar definitivamente' : 'Delete permanently'}</button></footer></section></div> : null}
 
       {showCreate ? (
         <div className="modal-overlay">

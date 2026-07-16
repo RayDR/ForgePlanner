@@ -25,8 +25,8 @@ export function PlanCategoryEditor({ locale, value, sources, onChange }: PlanCat
   const [newLabel, setNewLabel] = useState('')
   const [sourceId, setSourceId] = useState('')
   const t = locale === 'es'
-    ? { title: 'Categorías del plan', add: 'Agregar categoría', placeholder: 'Nombre de categoría', copy: 'Copiar de otro plan', choose: 'Selecciona un plan', remove: 'Eliminar categoría' }
-    : { title: 'Plan categories', add: 'Add category', placeholder: 'Category name', copy: 'Copy from another plan', choose: 'Choose a plan', remove: 'Delete category' }
+    ? { title: 'Categorías del plan', add: 'Agregar categoría', placeholder: 'Nombre de categoría', copy: 'Copiar de otro plan', choose: 'Selecciona un plan', remove: 'Eliminar categoría', color: 'Color' }
+    : { title: 'Plan categories', add: 'Add category', placeholder: 'Category name', copy: 'Copy from another plan', choose: 'Choose a plan', remove: 'Delete category', color: 'Color' }
 
   function addCategory() {
     const label = newLabel.trim()
@@ -55,7 +55,7 @@ export function PlanCategoryEditor({ locale, value, sources, onChange }: PlanCat
           <div className="plan-category-row" key={category.key}>
             <button type="button" className={category.isDefault ? 'category-default-toggle is-active' : 'category-default-toggle'} aria-label={locale === 'es' ? 'Usar como categoría predeterminada' : 'Use as default category'} aria-pressed={Boolean(category.isDefault)} onClick={() => onChange(value.map((item, itemIndex) => ({ ...item, isDefault: itemIndex === index })))}>★</button>
             <input aria-label={t.placeholder} className="field-input" value={category.label} onChange={(event) => onChange(value.map((item, itemIndex) => itemIndex === index ? { ...item, label: event.target.value } : item))} />
-            <select aria-label="Color" className="field-input" value={category.tone} onChange={(event) => onChange(value.map((item, itemIndex) => itemIndex === index ? { ...item, tone: event.target.value as CategoryMeta['tone'] } : item))}>{tones.map((tone) => <option value={tone} key={tone}>{tone}</option>)}</select>
+            <select aria-label={t.color} className="field-input" value={category.tone} onChange={(event) => onChange(value.map((item, itemIndex) => itemIndex === index ? { ...item, tone: event.target.value as CategoryMeta['tone'] } : item))}>{tones.map((tone) => <option value={tone} key={tone}>{tone}</option>)}</select>
             <button type="button" className="btn btn-ghost" aria-label={t.remove} title={t.remove} onClick={() => onChange(value.filter((_, itemIndex) => itemIndex !== index))}>×</button>
           </div>
         ))}

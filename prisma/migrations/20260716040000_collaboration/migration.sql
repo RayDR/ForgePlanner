@@ -1,0 +1,15 @@
+CREATE TABLE "Organization" ("id" UUID NOT NULL, "name" VARCHAR(120) NOT NULL, "slug" VARCHAR(80) NOT NULL, "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, "updated_at" TIMESTAMP(3) NOT NULL, CONSTRAINT "Organization_pkey" PRIMARY KEY ("id"));
+CREATE UNIQUE INDEX "Organization_slug_key" ON "Organization"("slug");
+CREATE TABLE "OrganizationMember" ("organization_id" UUID NOT NULL, "user_id" UUID NOT NULL, "role" VARCHAR(20) NOT NULL DEFAULT 'member', "joined_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, CONSTRAINT "OrganizationMember_pkey" PRIMARY KEY ("organization_id","user_id"));
+CREATE INDEX "OrganizationMember_user_id_idx" ON "OrganizationMember"("user_id");
+CREATE TABLE "Conversation" ("id" UUID NOT NULL, "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, "updated_at" TIMESTAMP(3) NOT NULL, CONSTRAINT "Conversation_pkey" PRIMARY KEY ("id"));
+CREATE TABLE "ConversationParticipant" ("conversation_id" UUID NOT NULL, "user_id" UUID NOT NULL, "joined_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, CONSTRAINT "ConversationParticipant_pkey" PRIMARY KEY ("conversation_id","user_id"));
+CREATE INDEX "ConversationParticipant_user_id_idx" ON "ConversationParticipant"("user_id");
+CREATE TABLE "Message" ("id" UUID NOT NULL, "conversation_id" UUID NOT NULL, "sender_user_id" UUID NOT NULL, "body" VARCHAR(4000) NOT NULL, "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, "edited_at" TIMESTAMP(3), "deleted_at" TIMESTAMP(3), CONSTRAINT "Message_pkey" PRIMARY KEY ("id"));
+CREATE INDEX "Message_conversation_id_created_at_idx" ON "Message"("conversation_id","created_at");
+ALTER TABLE "OrganizationMember" ADD CONSTRAINT "OrganizationMember_organization_id_fkey" FOREIGN KEY ("organization_id") REFERENCES "Organization"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "OrganizationMember" ADD CONSTRAINT "OrganizationMember_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "ConversationParticipant" ADD CONSTRAINT "ConversationParticipant_conversation_id_fkey" FOREIGN KEY ("conversation_id") REFERENCES "Conversation"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "ConversationParticipant" ADD CONSTRAINT "ConversationParticipant_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "Message" ADD CONSTRAINT "Message_conversation_id_fkey" FOREIGN KEY ("conversation_id") REFERENCES "Conversation"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "Message" ADD CONSTRAINT "Message_sender_user_id_fkey" FOREIGN KEY ("sender_user_id") REFERENCES "User"("id") ON DELETE RESTRICT ON UPDATE CASCADE;

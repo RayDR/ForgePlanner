@@ -1,0 +1,14 @@
+{
+  "enabled": true,
+  "host": "smtp.example.com",
+  "port": 587,
+  "secure": false,
+  "username": "mailer@example.com",
+  "password": "REPLACE_WHEN_IMPORTING; NEVER COMMIT A COMPLETED FILE",
+  "senderEmail": "mailer@example.com",
+  "senderName": "NorthStar Planner",
+  "replyTo": "support@example.com",
+  "timeoutMs": 10000,
+  "frontendUrl": "https://planner.domoforge.com",
+  "resetExpiresMinutes": 30
+}

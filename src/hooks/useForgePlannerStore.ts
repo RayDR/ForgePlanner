@@ -39,10 +39,17 @@ interface ForgePlannerStore extends ForgePlannerState {
   unarchivePlan: (planId: string) => void
   deletePlan: (planId: string) => void
   restoreDeletedPlan: (deletedId: string) => void
+  permanentlyDeletePlan: (deletedId: string) => void
+  clearDeletedPlans: () => void
   purgeExpiredDeletedPlans: () => void
   setMonthlyViewPreference: (planId: string, preference: MonthlyViewPreference) => void
   getPlanById: (planId: string) => ForgePlan | undefined
   syncActivePlanFromRoadmap: () => void
+  linkRemotePlans: (links: Array<{ importKey: string; remoteId: string; remoteRevision: number }>) => void
+  mergeRemotePlans: (plans: ForgePlan[]) => void
+  replaceRemotePlan: (plan: ForgePlan) => void
+  markPlanSynced: (planId: string, remoteRevision: number) => void
+  setRemoteSharingEnabled: (planId: string, enabled: boolean) => void
 }
 
 function deriveCategories(snapshot: PersistedRoadmapState) {
@@ -351,6 +358,8 @@ export const useForgePlannerStore = create<ForgePlannerStore>()(
           }
         })
       },
+      permanentlyDeletePlan: (deletedId) => set((state) => ({ deletedPlans: state.deletedPlans.filter((item) => item.id !== deletedId) })),
+      clearDeletedPlans: () => set({ deletedPlans: [] }),
       purgeExpiredDeletedPlans: () => {
         set((state) => ({
           deletedPlans: state.deletedPlans.filter((item) => new Date(item.expiresAt).getTime() > Date.now()),
@@ -366,6 +375,11 @@ export const useForgePlannerStore = create<ForgePlannerStore>()(
         }))
       },
       getPlanById: (planId) => get().plans.find((plan) => plan.id === planId),
+      linkRemotePlans: (links) => set((state) => ({ plans: state.plans.map((plan) => { const link = links.find((item) => item.importKey === plan.id); return link ? { ...plan, remoteId: link.remoteId, remoteRevision: link.remoteRevision } : plan }) })),
+      mergeRemotePlans: (plans) => set((state) => ({ plans: [...state.plans, ...plans.filter((remote) => !state.plans.some((local) => local.remoteId === remote.remoteId || local.id === remote.id))] })),
+      replaceRemotePlan: (remote) => set((state) => ({ plans: state.plans.map((plan) => plan.remoteId === remote.remoteId || plan.id === remote.id ? { ...remote, id: plan.id } : plan) })),
+      markPlanSynced: (planId, remoteRevision) => set((state) => ({ plans: withUpdatedPlan(state.plans, planId, (plan) => ({ ...plan, remoteRevision })) })),
+      setRemoteSharingEnabled: (planId, enabled) => set((state) => ({ plans: withUpdatedPlan(state.plans, planId, (plan) => ({ ...plan, remoteSharingEnabled: enabled })) })),
       syncActivePlanFromRoadmap: () => {
         const state = get()
         if (!state.activePlanId) {

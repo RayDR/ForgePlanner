@@ -13,6 +13,11 @@ export type MonthlyViewPreference = 'list' | 'kanban'
 
 export interface ForgePlan {
   id: string
+  remoteId?: string
+  remoteAccess?: 'owner' | 'editor' | 'viewer'
+  remoteRevision?: number
+  remoteSharingEnabled?: boolean
+  remoteLinkId?: string
   title: string
   description: string
   startDate: string
