@@ -12,7 +12,6 @@ import { AccountView } from './views/AccountView'
 import { ForgotPasswordView } from './views/ForgotPasswordView'
 import { ResetPasswordView } from './views/ResetPasswordView'
 import { VerifyEmailView } from './views/VerifyEmailView'
-import { CollaborationView } from './views/CollaborationView'
 import { AdminView } from './views/AdminView'
 import { RequirePermission } from './auth/PermissionGuard'
 import { ImpersonationBanner } from './admin/ImpersonationBanner'
@@ -76,7 +75,7 @@ function App() {
         <Route element={<RequireSession />}>
           <Route path="shared/:linkId" element={<SharedPlanLinkView />} />
           <Route path="account" element={<AccountView />} />
-          <Route path="collaboration" element={<CollaborationView />} />
+          <Route path="collaboration" element={<Navigate to="/plans" replace />} />
           <Route element={<RequirePermission permission="user.read" />}>
             <Route path="admin" element={<AdminView />} />
           </Route>

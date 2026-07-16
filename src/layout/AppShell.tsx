@@ -12,9 +12,11 @@ import { formatDateRange, getProjectYears } from '../utils/dateUtils'
 import { formatCurrency, getAverageProgress, getSavingsProgress } from '../utils/progressUtils'
 import { getProjectSavingsTotals, getYearlySavingsTotals, isSavingsTrackingEnabled } from '../utils/roadmapModel'
 import { resolveInitialMonthForYear } from '../utils/monthSelection'
-import { CalendarIcon, ListIcon, MoreVerticalIcon, PencilIcon, UsersIcon } from '../ui/icons'
+import { CalendarIcon, ListIcon, MoreVerticalIcon, PencilIcon } from '../ui/icons'
 import { useSession } from '../auth/SessionProvider'
 import { NotificationCenter } from '../notifications/NotificationCenter'
+import { AccountMenu } from '../account/AccountMenu'
+import { CollaborationLauncher } from '../plans/CollaborationLauncher'
 
 const views = [
   { to: '/roadmap', label: 'Annual roadmap' },
@@ -22,7 +24,7 @@ const views = [
 ]
 
 export function AppShell() {
-  const { setAppearance, session } = useSession()
+  const { setAppearance } = useSession()
   const importInputRef = useRef<HTMLInputElement | null>(null)
   const importExcelInputRef = useRef<HTMLInputElement | null>(null)
   const [showDataMenu, setShowDataMenu] = useState(false)
@@ -66,7 +68,6 @@ export function AppShell() {
   const t = copy[locale]
   const savingsEnabled = isSavingsTrackingEnabled(project)
   const readOnly = activePlan?.remoteAccess === 'viewer'
-  const accountInitials = (session?.user.profile?.displayName ?? session?.user.email ?? 'NS').trim().split(/\s+/).slice(0, 2).map((part) => part[0]?.toUpperCase()).join('') || 'NS'
 
   function selectYear(year: number) {
     if (location.pathname.includes('/monthly') && planId) {
@@ -187,7 +188,7 @@ export function AppShell() {
               <span aria-hidden="true">←</span>
               {t.backToPlans}
             </Button>
-            <div className="header-account-controls"><NotificationCenter /><IconButton label={t.collaborationAndGroups} onClick={() => navigate('/collaboration')}><UsersIcon width={19} height={19} /></IconButton><button type="button" className="account-avatar-button" onClick={() => navigate('/account')} aria-label={t.myAccount} title={session?.user.profile?.displayName ?? session?.user.email}>{accountInitials}</button><LocaleThemeControls
+            <div className="header-account-controls"><NotificationCenter /><CollaborationLauncher /><AccountMenu /><LocaleThemeControls
               locale={locale}
               theme={theme}
               onToggleLocale={() => { const next = locale === 'es' ? 'en' : 'es'; setLocale(next); void setAppearance({ locale: next }) }}

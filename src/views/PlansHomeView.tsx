@@ -33,7 +33,10 @@ import {
   ChevronUpIcon,
   UsersIcon,
   LockIcon,
+  ShareIcon,
 } from '../ui/icons'
+import { AccountMenu } from '../account/AccountMenu'
+import { CollaborationLauncher } from '../plans/CollaborationLauncher'
 
 type PlansFilter = 'active' | 'archived' | 'deleted'
 
@@ -193,7 +196,7 @@ function PlanPreviewCarousel({ plan, years, locale, onOpenYear, onOpenMonth }: {
 }
 
 export function PlansHomeView() {
-  const { setAppearance, session } = useSession()
+  const { setAppearance } = useSession()
   const navigate = useNavigate()
   const locale = useRoadmapStore((state) => state.locale)
   const theme = useRoadmapStore((state) => state.theme)
@@ -238,7 +241,6 @@ export function PlansHomeView() {
     [plans, archivedPlanIds],
   )
   const archivedPlans = useMemo(() => plans.filter((plan) => archivedPlanIds.includes(plan.id)), [plans, archivedPlanIds])
-  const accountInitials = (session?.user.profile?.displayName ?? session?.user.email ?? 'NS').trim().split(/\s+/).slice(0, 2).map((part) => part[0]?.toUpperCase()).join('') || 'NS'
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme)
@@ -427,7 +429,7 @@ export function PlansHomeView() {
                 <h1>{t.yourPlans}</h1>
               </div>
             </div>
-            <div className="header-account-controls"><NotificationCenter /><IconButton label={t.collaborationAndGroups} onClick={() => navigate('/collaboration')}><UsersIcon width={19} height={19} /></IconButton><button type="button" className="account-avatar-button" onClick={() => navigate('/account')} aria-label={t.myAccount} title={session?.user.profile?.displayName ?? session?.user.email}>{accountInitials}</button><LocaleThemeControls
+            <div className="header-account-controls"><NotificationCenter /><CollaborationLauncher /><AccountMenu /><LocaleThemeControls
               locale={locale}
               theme={theme}
               onToggleLocale={() => { const next = locale === 'es' ? 'en' : 'es'; setLocale(next); void setAppearance({ locale: next }) }}
@@ -492,7 +494,7 @@ export function PlansHomeView() {
                         {openMenuId === plan.id ? (
                           <div className="plan-card__menu" onClick={(event) => event.stopPropagation()}>
                             {plan.remoteAccess !== 'viewer' ? <button type="button" onClick={() => { setQuickEditTarget(plan); closeMenu() }}><PencilIcon width={16} height={16} /> {t.edit}</button> : null}
-                            {plan.remoteAccess === 'owner' && plan.remoteId ? <button type="button" onClick={() => { setSharingPlan(plan); closeMenu() }}>↗ {t.share}</button> : null}
+                            {plan.remoteAccess === 'owner' && plan.remoteId ? <button type="button" onClick={() => { setSharingPlan(plan); closeMenu() }}><ShareIcon width={16} height={16} /> {t.share}</button> : null}
                             {plan.remoteAccess === 'owner' && plan.remoteId ? <button type="button" onClick={() => { void togglePlanSharing(plan); closeMenu() }}><LockIcon width={16} height={16} /> {plan.remoteSharingEnabled === false ? t.unlockAccess : t.makePrivate}</button> : null}
                             <button type="button" onClick={() => { duplicatePlan(plan.id); closeMenu() }}><CopyIcon width={16} height={16} /> {t.duplicate}</button>
                             {plan.remoteAccess === 'owner' || !plan.remoteAccess ? <button type="button" onClick={() => { void handleArchivePlan(plan); closeMenu() }}><ArchiveIcon width={16} height={16} /> {t.archive}</button> : null}
@@ -622,6 +624,7 @@ export function PlansHomeView() {
                   sources={plans.filter((plan) => plan.id !== quickEditTarget.id).map((plan) => ({ id: plan.id, title: plan.title, categories: getPlanCategoryDefinitions(plan) }))}
                   onChange={(categoryDefinitions) => setQuickEditDraft((current) => current ? { ...current, categoryDefinitions } : current)}
                 />
+                {quickEditTarget.remoteId && quickEditTarget.remoteAccess === 'owner' ? <section className="plan-settings-access"><div><UsersIcon width={20} /><span><strong>{locale === 'es' ? 'Acceso y personas' : 'Access and people'}</strong><small>{locale === 'es' ? 'Agrega o elimina personas y define si pueden ver o editar.' : 'Add or remove people and choose whether they can view or edit.'}</small></span></div><button type="button" className="btn" onClick={() => { setQuickEditTarget(null); setSharingPlan(quickEditTarget) }}><ShareIcon width={16} /> {t.manageAccess}</button></section> : null}
               </div>
             </div>
             <footer className="modal-footer">
