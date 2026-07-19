@@ -16,6 +16,7 @@ import { AdminView } from './views/AdminView'
 import { RequirePermission } from './auth/PermissionGuard'
 import { ImpersonationBanner } from './admin/ImpersonationBanner'
 import { SharedPlanLinkView } from './views/SharedPlanLinkView'
+import { useSession } from './auth/SessionProvider'
 
 function DefaultLandingRoute() {
   return <Navigate to="/plans" replace />
@@ -55,10 +56,11 @@ function PlanRouteBootstrap() {
 
 function App() {
   const ensureInitialized = useForgePlannerStore((state) => state.ensureInitialized)
+  const { session } = useSession()
 
   useEffect(() => {
-    ensureInitialized()
-  }, [ensureInitialized])
+    ensureInitialized(!session)
+  }, [ensureInitialized, session])
 
   return (
     <BrowserRouter>

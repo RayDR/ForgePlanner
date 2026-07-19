@@ -31,10 +31,10 @@ function fromRemote(remote: RemotePlan, remoteLinkId?: string): ForgePlan {
 }
 
 export const planApi = {
-  list: async () => (await request<{ plans: RemotePlan[] }>('')).plans.map((plan) => fromRemote(plan)),
+  list: async (signal?: AbortSignal) => (await request<{ plans: RemotePlan[] }>('', { signal })).plans.map((plan) => fromRemote(plan)),
   get: async (remoteId: string) => fromRemote((await request<{ plan: RemotePlan }>(`/${remoteId}`)).plan),
   import: async (plans: ForgePlan[]) => (await request<{ plans: RemotePlan[] }>('/import', { method: 'POST', body: JSON.stringify({ plans: plans.map(payload) }) })).plans,
-  update: async (plan: ForgePlan, expectedRevision = plan.remoteRevision ?? 1) => fromRemote((await request<{ plan: RemotePlan }>(plan.remoteLinkId ? `/link/${plan.remoteLinkId}` : `/${plan.remoteId}`, { method: 'PATCH', body: JSON.stringify({ ...payload(plan), expectedRevision }) })).plan, plan.remoteLinkId),
+  update: async (plan: ForgePlan, expectedRevision = plan.remoteRevision ?? 1, signal?: AbortSignal) => fromRemote((await request<{ plan: RemotePlan }>(plan.remoteLinkId ? `/link/${plan.remoteLinkId}` : `/${plan.remoteId}`, { method: 'PATCH', body: JSON.stringify({ ...payload(plan), expectedRevision }), signal })).plan, plan.remoteLinkId),
   openSharedLink: async (linkId: string) => fromRemote((await request<{ plan: RemotePlan }>(`/link/${linkId}`)).plan, linkId),
   remove: (remoteId: string) => request<void>(`/${remoteId}`, { method: 'DELETE' }),
   restore: async (remoteId: string) => fromRemote((await request<{ plan: RemotePlan }>(`/${remoteId}/restore`, { method: 'POST', body: '{}' })).plan),

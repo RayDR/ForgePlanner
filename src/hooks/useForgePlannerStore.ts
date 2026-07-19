@@ -13,11 +13,12 @@ import type { PersistedRoadmapState } from '../utils/roadmapState'
 import type { Activity, CategoryMeta } from '../types/roadmap'
 import { DEFAULT_PROJECT_STATUSES } from '../utils/roadmapState'
 import { getClosestActiveMonth } from '../utils/dateUtils'
+import { createIdentityScopedStorage } from '../persistence/scopedStorage'
 
 const STORE_VERSION = 1
 
 interface ForgePlannerStore extends ForgePlannerState {
-  ensureInitialized: () => void
+  ensureInitialized: (createDefaults?: boolean) => void
   openPlan: (planId: string) => void
   createPlan: (draft: {
     title: string
@@ -47,6 +48,7 @@ interface ForgePlannerStore extends ForgePlannerState {
   syncActivePlanFromRoadmap: () => void
   linkRemotePlans: (links: Array<{ importKey: string; remoteId: string; remoteRevision: number }>) => void
   mergeRemotePlans: (plans: ForgePlan[]) => void
+  reconcileRemotePlans: (plans: ForgePlan[]) => void
   replaceRemotePlan: (plan: ForgePlan) => void
   markPlanSynced: (planId: string, remoteRevision: number) => void
   setRemoteSharingEnabled: (planId: string, enabled: boolean) => void
@@ -155,8 +157,9 @@ export const useForgePlannerStore = create<ForgePlannerStore>()(
       archivedPlanIds: [],
       hiddenPlanIds: [],
       deletedPlans: [],
-      ensureInitialized: () => {
+      ensureInitialized: (createDefaults = true) => {
         const state = get()
+        if (!createDefaults) return
         const demoExists = state.plans.some((plan) => plan.id === 'demo-three-month-plan') || state.deletedPlans.some((item) => item.plan.id === 'demo-three-month-plan')
         const roadmap = useRoadmapStore.getState()
         const demoPlan = demoExists ? undefined : buildMonthlyDemoPlan(roadmap.locale, roadmap.theme)
@@ -377,6 +380,16 @@ export const useForgePlannerStore = create<ForgePlannerStore>()(
       getPlanById: (planId) => get().plans.find((plan) => plan.id === planId),
       linkRemotePlans: (links) => set((state) => ({ plans: state.plans.map((plan) => { const link = links.find((item) => item.importKey === plan.id); return link ? { ...plan, remoteId: link.remoteId, remoteRevision: link.remoteRevision } : plan }) })),
       mergeRemotePlans: (plans) => set((state) => ({ plans: [...state.plans, ...plans.filter((remote) => !state.plans.some((local) => local.remoteId === remote.remoteId || local.id === remote.id))] })),
+      reconcileRemotePlans: (plans) => set((state) => {
+        const remoteKeys = new Set(plans.flatMap((plan) => [plan.id, plan.remoteId].filter((value): value is string => Boolean(value))))
+        const localOnly = state.plans.filter((plan) => !plan.remoteId && !remoteKeys.has(plan.id))
+        return {
+          plans: [...localOnly, ...plans],
+          activePlanId: state.activePlanId && [...localOnly, ...plans].some((plan) => plan.id === state.activePlanId)
+            ? state.activePlanId
+            : undefined,
+        }
+      }),
       replaceRemotePlan: (remote) => set((state) => ({ plans: state.plans.map((plan) => plan.remoteId === remote.remoteId || plan.id === remote.id ? { ...remote, id: plan.id } : plan) })),
       markPlanSynced: (planId, remoteRevision) => set((state) => ({ plans: withUpdatedPlan(state.plans, planId, (plan) => ({ ...plan, remoteRevision })) })),
       setRemoteSharingEnabled: (planId, enabled) => set((state) => ({ plans: withUpdatedPlan(state.plans, planId, (plan) => ({ ...plan, remoteSharingEnabled: enabled })) })),
@@ -404,7 +417,8 @@ export const useForgePlannerStore = create<ForgePlannerStore>()(
     {
       name: 'forge-planner-state',
       version: STORE_VERSION,
-      storage: createJSONStorage(() => localStorage),
+      storage: createJSONStorage(() => createIdentityScopedStorage()),
+      skipHydration: true,
       partialize: (state): ForgePlannerState => ({
         schemaVersion: state.schemaVersion,
         activePlanId: state.activePlanId,
@@ -416,3 +430,14 @@ export const useForgePlannerStore = create<ForgePlannerStore>()(
     },
   ),
 )
+
+export function resetForgePlannerMemory() {
+  useForgePlannerStore.setState({
+    schemaVersion: STORE_VERSION,
+    activePlanId: undefined,
+    plans: [],
+    archivedPlanIds: [],
+    hiddenPlanIds: [],
+    deletedPlans: [],
+  })
+}

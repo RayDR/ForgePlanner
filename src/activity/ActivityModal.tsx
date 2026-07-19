@@ -15,6 +15,7 @@ import {
 import { getActivityMonthIds, getCalculatedActivityProgress } from '../utils/roadmapModel'
 import type { ActivityColorKey } from '../types/roadmap'
 import { RecurrenceSelect } from '../ui/RecurrenceSelect'
+import { readActivityDraft, writeActivityDraft } from '../persistence/activityDraftStorage'
 
 const COLOR_OPTIONS: ActivityColorKey[] = ['slate', 'blue', 'green', 'amber', 'rose']
 
@@ -59,7 +60,8 @@ export function ActivityModal() {
   const subtaskDraftRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
-    const savedDraft = activity?.id ? localStorage.getItem(`activity-draft-${activity.id}`) : null
+    const draftPlanId = planId ?? project.id
+    const savedDraft = activity?.id ? readActivityDraft(draftPlanId, activity.id) : null
     const parsedDraft = (() => {
       try { return savedDraft ? JSON.parse(savedDraft) as { subtask?: string; author?: string; comment?: string; linkedQuery?: string } : null } catch { return null }
     })()
@@ -78,12 +80,12 @@ export function ActivityModal() {
     setSubtaskActionsId(null)
     setStatusMenuOpen(false)
     setDraftActivityId(activity?.id ?? null)
-  }, [activity?.id])
+  }, [activity?.id, planId, project.id])
 
   useEffect(() => {
     if (!activity?.id || draftActivityId !== activity.id) return
-    localStorage.setItem(`activity-draft-${activity.id}`, JSON.stringify({ subtask: subtaskDraft, author: commentAuthor, comment: commentMessage, linkedQuery: linkedTaskQuery }))
-  }, [activity?.id, draftActivityId, subtaskDraft, commentAuthor, commentMessage, linkedTaskQuery])
+    writeActivityDraft(planId ?? project.id, activity.id, JSON.stringify({ subtask: subtaskDraft, author: commentAuthor, comment: commentMessage, linkedQuery: linkedTaskQuery }))
+  }, [activity?.id, draftActivityId, subtaskDraft, commentAuthor, commentMessage, linkedTaskQuery, planId, project.id])
 
   if (!activity) {
     return null

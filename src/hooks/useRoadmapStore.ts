@@ -21,6 +21,7 @@ import type {
 } from '../types/roadmap'
 import { getClosestActiveMonth, normalizeDateRange } from '../utils/dateUtils'
 import { resolveMonthForYear } from '../utils/monthSelection'
+import { createIdentityScopedStorage } from '../persistence/scopedStorage'
 import { contractProjectTimelineAfterRemoval, inferPlannedStartDate } from '../utils/projectTimeline'
 import {
   type MigrationIssue,
@@ -1239,7 +1240,8 @@ export const useRoadmapStore = create<RoadmapState>()(
           migrationIssue: createMigrationIssue(persistedState),
         }
       },
-      storage: createJSONStorage(() => localStorage),
+      storage: createJSONStorage(() => createIdentityScopedStorage()),
+      skipHydration: true,
       partialize: (state) => ({
         schemaVersion: state.schemaVersion,
         project: state.project,
@@ -1254,3 +1256,12 @@ export const useRoadmapStore = create<RoadmapState>()(
     },
   ),
 )
+
+export function resetRoadmapMemory() {
+  useRoadmapStore.setState({
+    ...createDefaultPersistedState(),
+    activeActivityId: null,
+    pendingMove: null,
+    migrationIssue: null,
+  })
+}

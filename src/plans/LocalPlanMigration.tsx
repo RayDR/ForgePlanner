@@ -3,39 +3,78 @@ import { useForgePlannerStore } from '../hooks/useForgePlannerStore'
 import { useRoadmapStore } from '../hooks/useRoadmapStore'
 import type { ForgePlan } from '../types/forgePlanner'
 import { planApi, PlanConflictError } from './planApi'
+import { getIdentityScope, getScopeGeneration, isCurrentScope } from '../persistence/identityScope'
+import { readGuestPlanCandidates, removeImportedGuestPlans } from '../persistence/guestPlanMigration'
 
 function fingerprint(plan: ForgePlan) { return JSON.stringify({ title: plan.title, description: plan.description, startDate: plan.startDate, endDate: plan.endDate, planningMode: plan.planningMode, templateKey: plan.templateKey, categories: plan.categories, monthlyViewPreference: plan.monthlyViewPreference, snapshot: plan.snapshot }) }
 
 export function LocalPlanMigration() {
   const plans = useForgePlannerStore((state) => state.plans)
   const linkRemotePlans = useForgePlannerStore((state) => state.linkRemotePlans)
-  const mergeRemotePlans = useForgePlannerStore((state) => state.mergeRemotePlans)
+  const reconcileRemotePlans = useForgePlannerStore((state) => state.reconcileRemotePlans)
   const replaceRemotePlan = useForgePlannerStore((state) => state.replaceRemotePlan)
   const markPlanSynced = useForgePlannerStore((state) => state.markPlanSynced)
   const locale = useRoadmapStore((state) => state.locale)
   const [dismissed, setDismissed] = useState(false); const [working, setWorking] = useState(false); const [error, setError] = useState('')
   const [conflicts, setConflicts] = useState<Record<string, { local: ForgePlan; remote: ForgePlan }>>({})
+  const [guestPlans, setGuestPlans] = useState<ForgePlan[]>(readGuestPlanCandidates)
   const loaded = useRef(false); const savedFingerprints = useRef(new Map<string, string>()); const saving = useRef(new Set<string>())
-  const pending = useMemo(() => plans.filter((plan) => !plan.remoteId), [plans])
+  const accountPending = useMemo(() => plans.filter((plan) => !plan.remoteId), [plans])
+  const pending = useMemo(() => [...accountPending, ...guestPlans.filter((guest) => !accountPending.some((plan) => plan.id === guest.id))], [accountPending, guestPlans])
 
-  useEffect(() => { planApi.list().then((remote) => { remote.forEach((plan) => savedFingerprints.current.set(plan.id, fingerprint(plan))); mergeRemotePlans(remote); loaded.current = true }).catch((reason) => setError(reason instanceof Error ? reason.message : (locale === 'es' ? 'No fue posible cargar los planes de la nube.' : 'Unable to load cloud plans.'))) }, [locale, mergeRemotePlans])
+  useEffect(() => {
+    const controller = new AbortController()
+    const scope = getIdentityScope(); const generation = getScopeGeneration()
+    void planApi.list(controller.signal).then((remote) => {
+      if (!scope || !isCurrentScope(scope, generation)) return
+      remote.forEach((plan) => savedFingerprints.current.set(plan.id, fingerprint(plan)))
+      reconcileRemotePlans(remote); loaded.current = true
+    }).catch((reason) => {
+      if (controller.signal.aborted || !scope || !isCurrentScope(scope, generation)) return
+      setError(reason instanceof Error ? reason.message : (locale === 'es' ? 'No fue posible cargar los planes de la nube.' : 'Unable to load cloud plans.'))
+    })
+    return () => controller.abort()
+  }, [locale, reconcileRemotePlans])
   useEffect(() => {
     if (!loaded.current) return
+    const scope = getIdentityScope(); const generation = getScopeGeneration()
+    const controller = new AbortController()
     const timer = window.setTimeout(() => plans.filter((plan) => plan.remoteId && plan.remoteAccess !== 'viewer' && !conflicts[plan.id]).forEach((plan) => {
+      if (!scope || !isCurrentScope(scope, generation)) return
       const currentFingerprint = fingerprint(plan)
       if (savedFingerprints.current.get(plan.id) === currentFingerprint || saving.current.has(plan.id)) return
       saving.current.add(plan.id); savedFingerprints.current.set(plan.id, currentFingerprint)
-      void planApi.update(plan).then((remote) => markPlanSynced(plan.id, remote.remoteRevision ?? 1)).catch((reason) => {
+      void planApi.update(plan, plan.remoteRevision ?? 1, controller.signal).then((remote) => { if (isCurrentScope(scope, generation)) markPlanSynced(plan.id, remote.remoteRevision ?? 1) }).catch((reason) => {
+        if (controller.signal.aborted) return
+        if (!isCurrentScope(scope, generation)) return
         if (reason instanceof PlanConflictError) setConflicts((current) => ({ ...current, [plan.id]: { local: plan, remote: reason.current } }))
         else { savedFingerprints.current.delete(plan.id); setError(reason instanceof Error ? reason.message : String(reason)) }
       }).finally(() => saving.current.delete(plan.id))
     }), 1200)
-    return () => window.clearTimeout(timer)
+    return () => { window.clearTimeout(timer); controller.abort() }
   }, [plans, conflicts, markPlanSynced])
 
   function backup() { const blob = new Blob([JSON.stringify({ exportedAt: new Date().toISOString(), plans }, null, 2)], { type: 'application/json' }); const url = URL.createObjectURL(blob); const anchor = document.createElement('a'); anchor.href = url; anchor.download = 'northstar-local-plans-backup.json'; anchor.click(); URL.revokeObjectURL(url) }
-  async function migrate() { setWorking(true); setError(''); try { const remote = await planApi.import(pending); linkRemotePlans(remote.filter((item) => item.importKey).map((item) => ({ importKey: item.importKey!, remoteId: item.id, remoteRevision: item.revision }))) } catch (reason) { setError(reason instanceof Error ? reason.message : (locale === 'es' ? 'La importación falló.' : 'Import failed.')) } finally { setWorking(false) } }
-  async function keepLocal(planId: string) { const conflict = conflicts[planId]; if (!conflict) return; try { const remote = await planApi.update(conflict.local, conflict.remote.remoteRevision); markPlanSynced(planId, remote.remoteRevision ?? 1); savedFingerprints.current.set(planId, fingerprint(conflict.local)); clearConflict(planId) } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)) } }
+  async function migrate() {
+    const scope = getIdentityScope(); const generation = getScopeGeneration()
+    if (!scope) return
+    setWorking(true); setError('')
+    try {
+      const remote = await planApi.import(pending)
+      if (!isCurrentScope(scope, generation)) return
+      linkRemotePlans(remote.filter((item) => item.importKey).map((item) => ({ importKey: item.importKey!, remoteId: item.id, remoteRevision: item.revision })))
+      if (guestPlans.length) {
+        removeImportedGuestPlans(guestPlans)
+        setGuestPlans([])
+      }
+      const currentRemotePlans = await planApi.list()
+      if (isCurrentScope(scope, generation)) reconcileRemotePlans(currentRemotePlans)
+    } catch (reason) {
+      if (!isCurrentScope(scope, generation)) return
+      setError(reason instanceof Error ? reason.message : (locale === 'es' ? 'La importación falló.' : 'Import failed.'))
+    } finally { if (isCurrentScope(scope, generation)) setWorking(false) }
+  }
+  async function keepLocal(planId: string) { const conflict = conflicts[planId]; const scope = getIdentityScope(); const generation = getScopeGeneration(); if (!conflict || !scope) return; try { const remote = await planApi.update(conflict.local, conflict.remote.remoteRevision); if (!isCurrentScope(scope, generation)) return; markPlanSynced(planId, remote.remoteRevision ?? 1); savedFingerprints.current.set(planId, fingerprint(conflict.local)); clearConflict(planId) } catch (reason) { if (isCurrentScope(scope, generation)) setError(reason instanceof Error ? reason.message : String(reason)) } }
   function clearConflict(planId: string) { setConflicts((current) => { const next = { ...current }; delete next[planId]; return next }) }
 
   const conflictItems = Object.entries(conflicts)
