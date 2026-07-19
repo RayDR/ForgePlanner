@@ -6,6 +6,7 @@ import type {
   ForgePlan,
   ForgePlannerState,
   MonthlyViewPreference,
+  PlanSyncMetadata,
   PlanTemplateKey,
   PlanningMode,
 } from '../types/forgePlanner'
@@ -15,23 +16,28 @@ import { DEFAULT_PROJECT_STATUSES } from '../utils/roadmapState'
 import { getClosestActiveMonth } from '../utils/dateUtils'
 import { createIdentityScopedStorage } from '../persistence/scopedStorage'
 
-const STORE_VERSION = 1
+const STORE_VERSION = 2
+
+export interface PlanDraftInput {
+  title: string
+  description: string
+  startDate: string
+  endDate: string
+  planningMode: PlanningMode
+  templateKey?: PlanTemplateKey
+  savingsEnabled?: boolean
+  savingsMode?: 'free' | 'monthly-target'
+  defaultMonthlyTarget?: number
+  categoryDefinitions?: CategoryMeta[]
+}
 
 interface ForgePlannerStore extends ForgePlannerState {
   ensureInitialized: (createDefaults?: boolean) => void
   openPlan: (planId: string) => void
-  createPlan: (draft: {
-    title: string
-    description: string
-    startDate: string
-    endDate: string
-    planningMode: PlanningMode
-    templateKey?: PlanTemplateKey
-    savingsEnabled?: boolean
-    savingsMode?: 'free' | 'monthly-target'
-    defaultMonthlyTarget?: number
-    categoryDefinitions?: CategoryMeta[]
-  }) => string
+  createPlan: (draft: PlanDraftInput) => string
+  retainFailedCreate: (plan: ForgePlan, metadata: PlanSyncMetadata) => void
+  acceptServerPlan: (plan: ForgePlan, replacedPlanId?: string) => void
+  setPlanSync: (planId: string, metadata: PlanSyncMetadata) => void
   quickEditPlan: (planId: string, updates: { title?: string; description?: string; startDate?: string; endDate?: string; planningMode?: PlanningMode; templateKey?: PlanTemplateKey; savingsEnabled?: boolean; savingsMode?: 'free' | 'monthly-target'; defaultMonthlyTarget?: number; categoryDefinitions?: CategoryMeta[] }) => void
   duplicatePlan: (planId: string) => void
   hidePlan: (planId: string) => void
@@ -139,6 +145,13 @@ function createPlanSnapshot(draft: {
   }
 }
 
+export function createForgePlanDraft(draft: PlanDraftInput, locale: 'en' | 'es', theme: 'light' | 'dark', id = crypto.randomUUID()): ForgePlan {
+  const snapshot = createPlanSnapshot({ ...draft, locale, theme })
+  snapshot.project.id = id
+  const now = new Date().toISOString()
+  return { id, title: draft.title, description: draft.description, startDate: draft.startDate, endDate: draft.endDate, planningMode: draft.planningMode, templateKey: draft.templateKey, categories: snapshot.project.categoryDefinitions?.map((category) => category.key) ?? [], monthlyViewPreference: 'list', snapshot, createdAt: now, updatedAt: now }
+}
+
 function nextDeletedExpiry() {
   return new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString()
 }
@@ -157,6 +170,7 @@ export const useForgePlannerStore = create<ForgePlannerStore>()(
       archivedPlanIds: [],
       hiddenPlanIds: [],
       deletedPlans: [],
+      syncByPlanId: {},
       ensureInitialized: (createDefaults = true) => {
         const state = get()
         if (!createDefaults) return
@@ -186,44 +200,28 @@ export const useForgePlannerStore = create<ForgePlannerStore>()(
       },
       createPlan: (draft) => {
         const roadmap = useRoadmapStore.getState()
-        const snapshot = createPlanSnapshot({
-          title: draft.title,
-          description: draft.description,
-          startDate: draft.startDate,
-          endDate: draft.endDate,
-          locale: roadmap.locale,
-          theme: roadmap.theme,
-          savingsEnabled: draft.savingsEnabled,
-          savingsMode: draft.savingsMode,
-          defaultMonthlyTarget: draft.defaultMonthlyTarget,
-          categoryDefinitions: draft.categoryDefinitions,
-        })
-        const now = new Date().toISOString()
-        const plan: ForgePlan = {
-          id: snapshot.project.id,
-          title: draft.title,
-          description: draft.description,
-          startDate: draft.startDate,
-          endDate: draft.endDate,
-          planningMode: draft.planningMode,
-          templateKey: draft.templateKey,
-          categories: snapshot.project.categoryDefinitions?.map((category) => category.key) ?? [],
-          monthlyViewPreference: 'list',
-          snapshot,
-          createdAt: now,
-          updatedAt: now,
-        }
+        const plan = createForgePlanDraft(draft, roadmap.locale, roadmap.theme)
 
         set((state) => ({
           plans: [plan, ...state.plans],
           activePlanId: plan.id,
           archivedPlanIds: state.archivedPlanIds.filter((id) => id !== plan.id),
           hiddenPlanIds: state.hiddenPlanIds.filter((id) => id !== plan.id),
+          syncByPlanId: { ...state.syncByPlanId, [plan.id]: { state: 'local' } },
         }))
 
-        useRoadmapStore.getState().loadSnapshot(snapshot)
+        useRoadmapStore.getState().loadSnapshot(plan.snapshot)
         return plan.id
       },
+      retainFailedCreate: (plan, metadata) => set((state) => ({ plans: [plan, ...state.plans.filter((item) => item.id !== plan.id)], syncByPlanId: { ...state.syncByPlanId, [plan.id]: metadata } })),
+      acceptServerPlan: (plan, replacedPlanId) => set((state) => {
+        const replacedIds = new Set([plan.id, plan.remoteId, replacedPlanId].filter((value): value is string => Boolean(value)))
+        const nextSync = { ...state.syncByPlanId }
+        if (replacedPlanId) delete nextSync[replacedPlanId]
+        nextSync[plan.id] = { state: 'synced' }
+        return { plans: [plan, ...state.plans.filter((item) => !replacedIds.has(item.id) && !replacedIds.has(item.remoteId ?? ''))], activePlanId: plan.id, syncByPlanId: nextSync }
+      }),
+      setPlanSync: (planId, metadata) => set((state) => ({ syncByPlanId: { ...state.syncByPlanId, [planId]: metadata } })),
       quickEditPlan: (planId, updates) => {
         const now = new Date().toISOString()
         set((state) => ({
@@ -345,6 +343,7 @@ export const useForgePlannerStore = create<ForgePlannerStore>()(
             archivedPlanIds: state.archivedPlanIds.filter((id) => id !== planId),
             hiddenPlanIds: state.hiddenPlanIds.filter((id) => id !== planId),
             deletedPlans: [deletedRecord, ...state.deletedPlans],
+            syncByPlanId: Object.fromEntries(Object.entries(state.syncByPlanId).filter(([id]) => id !== planId)),
           }
         })
       },
@@ -378,20 +377,30 @@ export const useForgePlannerStore = create<ForgePlannerStore>()(
         }))
       },
       getPlanById: (planId) => get().plans.find((plan) => plan.id === planId),
-      linkRemotePlans: (links) => set((state) => ({ plans: state.plans.map((plan) => { const link = links.find((item) => item.importKey === plan.id); return link ? { ...plan, remoteId: link.remoteId, remoteRevision: link.remoteRevision } : plan }) })),
+      linkRemotePlans: (links) => set((state) => ({ plans: state.plans.map((plan) => { const link = links.find((item) => item.importKey === plan.id); return link ? { ...plan, remoteId: link.remoteId, remoteRevision: link.remoteRevision } : plan }), syncByPlanId: { ...state.syncByPlanId, ...Object.fromEntries(links.map((link) => [link.importKey, { state: 'synced' as const }])) } })),
       mergeRemotePlans: (plans) => set((state) => ({ plans: [...state.plans, ...plans.filter((remote) => !state.plans.some((local) => local.remoteId === remote.remoteId || local.id === remote.id))] })),
       reconcileRemotePlans: (plans) => set((state) => {
         const remoteKeys = new Set(plans.flatMap((plan) => [plan.id, plan.remoteId].filter((value): value is string => Boolean(value))))
-        const localOnly = state.plans.filter((plan) => !plan.remoteId && !remoteKeys.has(plan.id))
+        const localOnly = state.plans.filter((plan) => !plan.remoteId && !remoteKeys.has(plan.id) && ['local', 'failed', 'offline'].includes(state.syncByPlanId[plan.id]?.state ?? 'local'))
+        const protectedRemote = state.plans.filter((plan) => plan.remoteId && ['failed', 'offline', 'conflict'].includes(state.syncByPlanId[plan.id]?.state ?? '') && plans.some((remote) => remote.remoteId === plan.remoteId))
+        const protectedKeys = new Set(protectedRemote.map((plan) => plan.remoteId))
+        const authoritative = plans.filter((plan) => !protectedKeys.has(plan.remoteId))
+        const nextPlans = [...localOnly, ...protectedRemote, ...authoritative]
+        const nextSync = { ...state.syncByPlanId, ...Object.fromEntries(authoritative.map((plan) => [plan.id, { state: 'synced' as const }])) }
         return {
-          plans: [...localOnly, ...plans],
-          activePlanId: state.activePlanId && [...localOnly, ...plans].some((plan) => plan.id === state.activePlanId)
+          plans: nextPlans,
+          syncByPlanId: nextSync,
+          activePlanId: state.activePlanId && nextPlans.some((plan) => plan.id === state.activePlanId)
             ? state.activePlanId
             : undefined,
         }
       }),
-      replaceRemotePlan: (remote) => set((state) => ({ plans: state.plans.map((plan) => plan.remoteId === remote.remoteId || plan.id === remote.id ? { ...remote, id: plan.id } : plan) })),
-      markPlanSynced: (planId, remoteRevision) => set((state) => ({ plans: withUpdatedPlan(state.plans, planId, (plan) => ({ ...plan, remoteRevision })) })),
+      replaceRemotePlan: (remote) => set((state) => {
+        const matched = state.plans.find((plan) => plan.remoteId === remote.remoteId || plan.id === remote.id)
+        const localId = matched?.id ?? remote.id
+        return { plans: state.plans.map((plan) => plan.remoteId === remote.remoteId || plan.id === remote.id ? { ...remote, id: plan.id } : plan), syncByPlanId: { ...state.syncByPlanId, [localId]: { state: 'synced' } } }
+      }),
+      markPlanSynced: (planId, remoteRevision) => set((state) => ({ plans: withUpdatedPlan(state.plans, planId, (plan) => ({ ...plan, remoteRevision })), syncByPlanId: { ...state.syncByPlanId, [planId]: { state: 'synced' } } })),
       setRemoteSharingEnabled: (planId, enabled) => set((state) => ({ plans: withUpdatedPlan(state.plans, planId, (plan) => ({ ...plan, remoteSharingEnabled: enabled })) })),
       syncActivePlanFromRoadmap: () => {
         const state = get()
@@ -417,6 +426,10 @@ export const useForgePlannerStore = create<ForgePlannerStore>()(
     {
       name: 'forge-planner-state',
       version: STORE_VERSION,
+      migrate: (persisted) => {
+        const previous = persisted as Partial<ForgePlannerState>
+        return { ...previous, schemaVersion: STORE_VERSION, syncByPlanId: previous.syncByPlanId ?? Object.fromEntries((previous.plans ?? []).map((plan) => [plan.id, { state: plan.remoteId ? 'synced' as const : 'local' as const }])) }
+      },
       storage: createJSONStorage(() => createIdentityScopedStorage()),
       skipHydration: true,
       partialize: (state): ForgePlannerState => ({
@@ -426,6 +439,7 @@ export const useForgePlannerStore = create<ForgePlannerStore>()(
         archivedPlanIds: state.archivedPlanIds,
         hiddenPlanIds: state.hiddenPlanIds,
         deletedPlans: state.deletedPlans,
+        syncByPlanId: state.syncByPlanId,
       }),
     },
   ),
@@ -439,5 +453,6 @@ export function resetForgePlannerMemory() {
     archivedPlanIds: [],
     hiddenPlanIds: [],
     deletedPlans: [],
+    syncByPlanId: {},
   })
 }

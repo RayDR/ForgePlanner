@@ -38,6 +38,8 @@ NorthStar Planner is a React/Vite planner backed by a modular Node/Express API. 
 
 - PostgreSQL ownership with complete JSONB snapshots
 - CRUD policies based on the authenticated session, never a client-provided owner ID
+- server-first authenticated creation using an owner-scoped `clientMutationId`
+- first-successful-request-wins create retries: the same owner and mutation ID return the original plan with `created: false`, without changing its payload, revision or audit history
 - explicit, idempotent local plan import using `importKey`
 - downloadable JSON backup before migration
 - local data is not automatically deleted after importing
@@ -104,6 +106,13 @@ npm run dev:all
 ```
 
 The client runs at `http://localhost:5173`; Vite proxies `/api` to `http://127.0.0.1:4100`.
+
+The PostgreSQL plan integration suite must use a dedicated test database whose
+name or schema contains `test`. It refuses to reuse `DATABASE_URL`:
+
+```bash
+TEST_DATABASE_URL="postgresql://user:password@127.0.0.1:5432/northstar_planner_test?schema=public" npm run test:integration
+```
 
 ## Initial administrator
 

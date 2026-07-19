@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useForgePlannerStore } from '../hooks/useForgePlannerStore'
+import { createForgePlanDraft, useForgePlannerStore } from '../hooks/useForgePlannerStore'
 import { useRoadmapStore } from '../hooks/useRoadmapStore'
 import { copy } from '../i18n'
 import type { Locale } from '../i18n'
@@ -19,7 +19,8 @@ import { LocalPlanMigration } from '../plans/LocalPlanMigration'
 import { PlanInvitations } from '../plans/PlanInvitations'
 import { PlanSharingDialog } from '../plans/PlanSharingDialog'
 import { sharingApi } from '../plans/sharingApi'
-import { planApi } from '../plans/planApi'
+import { planApi, PlanRequestError } from '../plans/planApi'
+import { getIdentityScope, getScopeGeneration, isCurrentScope } from '../persistence/identityScope'
 import {
   ArchiveIcon,
   CopyIcon,
@@ -193,7 +194,7 @@ function PlanPreviewCarousel({ plan, years, locale, onOpenYear, onOpenMonth }: {
 }
 
 export function PlansHomeView() {
-  const { setAppearance } = useSession()
+  const { setAppearance, session } = useSession()
   const navigate = useNavigate()
   const locale = useRoadmapStore((state) => state.locale)
   const theme = useRoadmapStore((state) => state.theme)
@@ -215,6 +216,10 @@ export function PlansHomeView() {
   const createPlan = useForgePlannerStore((state) => state.createPlan)
   const mergeRemotePlans = useForgePlannerStore((state) => state.mergeRemotePlans)
   const setRemoteSharingEnabled = useForgePlannerStore((state) => state.setRemoteSharingEnabled)
+  const syncByPlanId = useForgePlannerStore((state) => state.syncByPlanId)
+  const retainFailedCreate = useForgePlannerStore((state) => state.retainFailedCreate)
+  const acceptServerPlan = useForgePlannerStore((state) => state.acceptServerPlan)
+  const setPlanSync = useForgePlannerStore((state) => state.setPlanSync)
 
   const [openMenuId, setOpenMenuId] = useState<string | null>(null)
   const [quickEditTarget, setQuickEditTarget] = useState<ForgePlan | null>(null)
@@ -231,6 +236,9 @@ export function PlansHomeView() {
   const [undoDelete, setUndoDelete] = useState<{ deletedId: string; title: string } | null>(null)
   const [sharingPlan, setSharingPlan] = useState<ForgePlan | null>(null)
   const [confirmClearDeleted, setConfirmClearDeleted] = useState(false)
+  const [createSaving, setCreateSaving] = useState(false)
+  const [createError, setCreateError] = useState('')
+  const createRequestRef = useRef<AbortController | null>(null)
 
   const t = copy[locale]
   const activePlans = useMemo(
@@ -258,6 +266,8 @@ export function PlansHomeView() {
     document.addEventListener('mousedown', onDocumentClick)
     return () => document.removeEventListener('mousedown', onDocumentClick)
   }, [])
+
+  useEffect(() => () => createRequestRef.current?.abort(), [])
 
   useEffect(() => {
     if (quickEditTarget) {
@@ -309,15 +319,69 @@ export function PlansHomeView() {
     downloadJson(`${safeName}.json`, plan.snapshot)
   }
 
-  function handleCreatePlan() {
+  function failedSyncMetadata(reason: unknown, clientMutationId: string) {
+    const offline = reason instanceof TypeError
+    return {
+      state: offline ? 'offline' as const : 'failed' as const,
+      clientMutationId,
+      error: {
+        code: reason instanceof PlanRequestError ? reason.code : offline ? 'NETWORK_UNAVAILABLE' : 'PLAN_CREATE_FAILED',
+        message: reason instanceof Error ? reason.message : (locale === 'es' ? 'No fue posible guardar el plan.' : 'The plan could not be saved.'),
+      },
+    }
+  }
+
+  async function handleCreatePlan() {
     if (!createDraft.title.trim()) {
       return
     }
 
-    const planId = createPlan({ ...createDraft, title: createDraft.title.trim() })
-    setShowCreate(false)
-    setCreateDraft(defaultDraft(locale))
-    navigate(`/plans/${planId}/roadmap`)
+    const normalizedDraft = { ...createDraft, title: createDraft.title.trim() }
+    if (!session) {
+      const planId = createPlan(normalizedDraft)
+      setShowCreate(false); setCreateDraft(defaultDraft(locale)); navigate(`/plans/${planId}/roadmap`)
+      return
+    }
+
+    const clientMutationId = crypto.randomUUID()
+    const preparedPlan = createForgePlanDraft(normalizedDraft, locale, theme)
+    const draftPlan = { ...preparedPlan, id: `outbox:${clientMutationId}` }
+    const scope = getIdentityScope(); const generation = getScopeGeneration()
+    if (!scope) return
+    const controller = new AbortController(); createRequestRef.current?.abort(); createRequestRef.current = controller
+    setCreateSaving(true); setCreateError('')
+    try {
+      const result = await planApi.create(draftPlan, clientMutationId, controller.signal)
+      if (!isCurrentScope(scope, generation)) return
+      acceptServerPlan(result.plan)
+      setShowCreate(false); setCreateDraft(defaultDraft(locale))
+      navigate(`/plans/${result.plan.id}/roadmap`)
+    } catch (reason) {
+      if (controller.signal.aborted || !isCurrentScope(scope, generation)) return
+      const metadata = failedSyncMetadata(reason, clientMutationId)
+      retainFailedCreate(draftPlan, metadata)
+      setCreateError(metadata.error.message)
+    } finally {
+      if (isCurrentScope(scope, generation)) setCreateSaving(false)
+      if (createRequestRef.current === controller) createRequestRef.current = null
+    }
+  }
+
+  async function retryCreate(plan: ForgePlan) {
+    const metadata = syncByPlanId[plan.id]
+    if (!metadata?.clientMutationId) return
+    const scope = getIdentityScope(); const generation = getScopeGeneration()
+    if (!scope) return
+    const controller = new AbortController(); createRequestRef.current?.abort(); createRequestRef.current = controller
+    setPlanSync(plan.id, { state: 'saving', clientMutationId: metadata.clientMutationId })
+    try {
+      const result = await planApi.create(plan, metadata.clientMutationId, controller.signal)
+      if (!isCurrentScope(scope, generation)) return
+      acceptServerPlan(result.plan, plan.id)
+      navigate(`/plans/${result.plan.id}/roadmap`)
+    } catch (reason) {
+      if (!controller.signal.aborted && isCurrentScope(scope, generation)) setPlanSync(plan.id, failedSyncMetadata(reason, metadata.clientMutationId))
+    } finally { if (createRequestRef.current === controller) createRequestRef.current = null }
   }
 
   function handleSaveQuickEdit() {
@@ -459,19 +523,21 @@ export function PlansHomeView() {
             {activePlans.length ? (
               activePlans.map((plan) => {
                 const previewYears = previewByPlan.get(plan.id) ?? []
+                const sync = syncByPlanId[plan.id]
+                const createPending = !plan.remoteId && sync?.clientMutationId
 
                 return (
                   <article
                     key={plan.id}
                     className="plan-card card"
-                    role="link"
-                    tabIndex={0}
+                    role={createPending ? undefined : 'link'}
+                    tabIndex={createPending ? -1 : 0}
                     aria-label={`${plan.title}. ${t.openPlanTooltip}`}
-                    onClick={() => openSelectedPlan(plan)}
+                    onClick={() => { if (!createPending) openSelectedPlan(plan) }}
                     onKeyDown={(event) => {
                       if (event.key === 'Enter' || event.key === ' ') {
                         event.preventDefault()
-                        openSelectedPlan(plan)
+                        if (!createPending) openSelectedPlan(plan)
                       }
                     }}
                   >
@@ -479,6 +545,7 @@ export function PlansHomeView() {
                       <div className="plan-card__title-block">
                         <p className="plan-card__kicker">{plan.planningMode === 'monthly' ? t.monthlyView : t.annualView}</p>
                         <h2 onDoubleClick={(event) => editPlan(event, plan)} title={locale === 'es' ? 'Doble clic para editar' : 'Double-click to edit'}>{plan.title}</h2>
+                        {sync && sync.state !== 'synced' ? <span className={`plan-access-badge plan-sync-${sync.state}`}>{sync.state === 'saving' ? (locale === 'es' ? 'Guardando…' : 'Saving…') : sync.state === 'offline' ? (locale === 'es' ? 'Sin conexión' : 'Offline') : sync.state === 'failed' ? (locale === 'es' ? 'Error al guardar' : 'Save failed') : sync.state}</span> : null}
                         {plan.remoteAccess && plan.remoteAccess !== 'owner' ? <span className="plan-access-badge">{plan.remoteAccess === 'editor' ? (locale === 'es' ? 'Compartido · editor' : 'Shared · editor') : (locale === 'es' ? 'Compartido · lectura' : 'Shared · view')}</span> : null}
                       </div>
                       <div className="plan-card__actions" ref={openMenuId === plan.id ? menuRef : undefined}>
@@ -503,6 +570,7 @@ export function PlansHomeView() {
                     </header>
 
                     <p className="plan-card__description" onDoubleClick={(event) => editPlan(event, plan)} title={locale === 'es' ? 'Doble clic para editar' : 'Double-click to edit'}>{plan.description || t.noPlans}</p>
+                    {createPending ? <div className="plan-sync-actions" onClick={(event) => event.stopPropagation()}><span>{sync?.error?.message}</span><button className="btn btn-primary" type="button" disabled={sync?.state === 'saving'} onClick={() => void retryCreate(plan)}>{locale === 'es' ? 'Reintentar' : 'Retry'}</button></div> : null}
                     <div className="plan-card__preview-head"><span>{locale === 'es' ? 'Calendario' : 'Calendar'}</span><small>{locale === 'es' ? 'Actualizado' : 'Updated'}: {new Date(plan.updatedAt).toLocaleDateString()}</small></div>
                     <div className="plan-card__preview" onClick={(event) => event.stopPropagation()}>
                       <PlanPreviewCarousel plan={plan} years={previewYears} locale={locale} onOpenYear={openPlanYear} onOpenMonth={openPlanMonth} />
@@ -687,7 +755,8 @@ export function PlansHomeView() {
             </div>
             <footer className="modal-footer">
               <Button variant="ghost" type="button" onClick={() => setShowCreate(false)}>{t.cancel}</Button>
-              <Button variant="primary" type="button" onClick={handleCreatePlan}>{t.createPlan}</Button>
+              {createError ? <p className="auth-error" role="alert">{createError}</p> : null}
+              <Button variant="primary" type="button" disabled={createSaving} onClick={() => void handleCreatePlan()}>{createSaving ? (locale === 'es' ? 'Guardando…' : 'Saving…') : t.createPlan}</Button>
             </footer>
           </div>
         </div>

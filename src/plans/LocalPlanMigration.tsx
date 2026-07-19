@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useForgePlannerStore } from '../hooks/useForgePlannerStore'
 import { useRoadmapStore } from '../hooks/useRoadmapStore'
 import type { ForgePlan } from '../types/forgePlanner'
-import { planApi, PlanConflictError } from './planApi'
+import { planApi, PlanConflictError, PlanRequestError } from './planApi'
 import { getIdentityScope, getScopeGeneration, isCurrentScope } from '../persistence/identityScope'
 import { readGuestPlanCandidates, removeImportedGuestPlans } from '../persistence/guestPlanMigration'
 
@@ -14,12 +14,14 @@ export function LocalPlanMigration() {
   const reconcileRemotePlans = useForgePlannerStore((state) => state.reconcileRemotePlans)
   const replaceRemotePlan = useForgePlannerStore((state) => state.replaceRemotePlan)
   const markPlanSynced = useForgePlannerStore((state) => state.markPlanSynced)
+  const setPlanSync = useForgePlannerStore((state) => state.setPlanSync)
+  const syncByPlanId = useForgePlannerStore((state) => state.syncByPlanId)
   const locale = useRoadmapStore((state) => state.locale)
   const [dismissed, setDismissed] = useState(false); const [working, setWorking] = useState(false); const [error, setError] = useState('')
   const [conflicts, setConflicts] = useState<Record<string, { local: ForgePlan; remote: ForgePlan }>>({})
   const [guestPlans, setGuestPlans] = useState<ForgePlan[]>(readGuestPlanCandidates)
   const loaded = useRef(false); const savedFingerprints = useRef(new Map<string, string>()); const saving = useRef(new Set<string>())
-  const accountPending = useMemo(() => plans.filter((plan) => !plan.remoteId), [plans])
+  const accountPending = useMemo(() => plans.filter((plan) => !plan.remoteId && (syncByPlanId[plan.id]?.state ?? 'local') === 'local'), [plans, syncByPlanId])
   const pending = useMemo(() => [...accountPending, ...guestPlans.filter((guest) => !accountPending.some((plan) => plan.id === guest.id))], [accountPending, guestPlans])
 
   useEffect(() => {
@@ -44,15 +46,28 @@ export function LocalPlanMigration() {
       const currentFingerprint = fingerprint(plan)
       if (savedFingerprints.current.get(plan.id) === currentFingerprint || saving.current.has(plan.id)) return
       saving.current.add(plan.id); savedFingerprints.current.set(plan.id, currentFingerprint)
-      void planApi.update(plan, plan.remoteRevision ?? 1, controller.signal).then((remote) => { if (isCurrentScope(scope, generation)) markPlanSynced(plan.id, remote.remoteRevision ?? 1) }).catch((reason) => {
+      setPlanSync(plan.id, { state: 'saving' })
+      void planApi.update(plan, plan.remoteRevision ?? 1, controller.signal).then((remote) => { if (isCurrentScope(scope, generation)) replaceRemotePlan(remote) }).catch(async (reason) => {
         if (controller.signal.aborted) return
         if (!isCurrentScope(scope, generation)) return
-        if (reason instanceof PlanConflictError) setConflicts((current) => ({ ...current, [plan.id]: { local: plan, remote: reason.current } }))
-        else { savedFingerprints.current.delete(plan.id); setError(reason instanceof Error ? reason.message : String(reason)) }
+        if (reason instanceof PlanConflictError) {
+          setPlanSync(plan.id, { state: 'conflict', error: { code: 'PLAN_VERSION_CONFLICT', message: reason.message } })
+          try {
+            const remote = await planApi.get(plan.remoteId!)
+            if (isCurrentScope(scope, generation)) setConflicts((current) => ({ ...current, [plan.id]: { local: plan, remote } }))
+          } catch { /* Access may have been revoked after the conflict response. */ }
+        } else {
+          const offline = reason instanceof TypeError
+          setPlanSync(plan.id, { state: offline ? 'offline' : 'failed', error: { code: reason instanceof PlanRequestError ? reason.code : 'PLAN_SYNC_FAILED', message: reason instanceof Error ? reason.message : String(reason) } })
+          savedFingerprints.current.delete(plan.id); setError(reason instanceof Error ? reason.message : String(reason))
+          if (reason instanceof PlanRequestError && (reason.status === 403 || reason.status === 404)) {
+            void planApi.list().then((remote) => { if (isCurrentScope(scope, generation)) reconcileRemotePlans(remote) })
+          }
+        }
       }).finally(() => saving.current.delete(plan.id))
     }), 1200)
     return () => { window.clearTimeout(timer); controller.abort() }
-  }, [plans, conflicts, markPlanSynced])
+  }, [plans, conflicts, markPlanSynced, reconcileRemotePlans, replaceRemotePlan, setPlanSync])
 
   function backup() { const blob = new Blob([JSON.stringify({ exportedAt: new Date().toISOString(), plans }, null, 2)], { type: 'application/json' }); const url = URL.createObjectURL(blob); const anchor = document.createElement('a'); anchor.href = url; anchor.download = 'northstar-local-plans-backup.json'; anchor.click(); URL.revokeObjectURL(url) }
   async function migrate() {

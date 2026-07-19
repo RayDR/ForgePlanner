@@ -11,6 +11,7 @@
     "build:api": "tsc -p tsconfig.server.json",
     "postbuild": "./scripts/sync-www.sh",
     "test": "vitest run --exclude 'server-dist/**'",
+    "test:integration": "./scripts/test-postgres-integration.sh",
     "lint": "eslint .",
     "preview": "vite preview",
     "start:api": "node server-dist/server/index.js",

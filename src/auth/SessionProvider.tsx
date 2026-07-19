@@ -5,6 +5,7 @@ import { useRoadmapStore } from '../hooks/useRoadmapStore'
 import { GUEST_SCOPE, getIdentityScope, userIdentityScope } from '../persistence/identityScope'
 import { clearBrowserIdentityMemory, transitionBrowserIdentity } from '../persistence/identityTransition'
 import { publishIdentitySignal, subscribeToIdentitySignals } from '../persistence/identitySignals'
+import { subscribeToSessionInvalid } from './sessionInvalidation'
 
 interface SessionContextValue {
   session: SessionPayload | null
@@ -61,6 +62,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     return () => window.clearTimeout(timer)
   }, [resolveSession])
   useEffect(() => subscribeToIdentitySignals(() => { clearBrowserIdentityMemory(); void resolveSession() }), [resolveSession])
+  useEffect(() => subscribeToSessionInvalid(() => { clearBrowserIdentityMemory(); void resolveSession() }), [resolveSession])
   const login = useCallback(async (email: string, password: string, recaptchaToken?: string) => {
     const operation = ++operationRef.current
     setLoading(true); clearBrowserIdentityMemory()

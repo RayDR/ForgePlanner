@@ -38,6 +38,12 @@ export interface DeletedPlanRecord {
   expiresAt: string
 }
 
+export interface PlanSyncMetadata {
+  state: 'local' | 'saving' | 'synced' | 'failed' | 'offline' | 'conflict'
+  clientMutationId?: string
+  error?: { code: string; message: string }
+}
+
 export interface ForgePlannerState {
   schemaVersion: number
   activePlanId?: string
@@ -45,4 +51,5 @@ export interface ForgePlannerState {
   archivedPlanIds: string[]
   hiddenPlanIds: string[]
   deletedPlans: DeletedPlanRecord[]
+  syncByPlanId: Record<string, PlanSyncMetadata>
 }

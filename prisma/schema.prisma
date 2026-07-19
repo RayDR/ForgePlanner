@@ -28,34 +28,34 @@ enum PlanAccessStatus {
 }
 
 model User {
-  id                     String                 @id @default(uuid()) @db.Uuid
-  email                  String                 @unique @db.VarChar(320)
-  passwordHash           String?                @map("password_hash")
-  status                 UserStatus             @default(active)
-  emailVerifiedAt        DateTime?              @map("email_verified_at")
-  termsAcceptedAt        DateTime?              @map("terms_accepted_at")
-  lastLoginAt            DateTime?              @map("last_login_at")
-  createdAt              DateTime               @default(now()) @map("created_at")
-  updatedAt              DateTime               @updatedAt @map("updated_at")
-  deletedAt              DateTime?              @map("deleted_at")
-  profile                Profile?
-  roles                  UserRole[]
-  sessions               Session[]
-  passwordResetTokens    PasswordResetToken[]
+  id                      String                    @id @default(uuid()) @db.Uuid
+  email                   String                    @unique @db.VarChar(320)
+  passwordHash            String?                   @map("password_hash")
+  status                  UserStatus                @default(active)
+  emailVerifiedAt         DateTime?                 @map("email_verified_at")
+  termsAcceptedAt         DateTime?                 @map("terms_accepted_at")
+  lastLoginAt             DateTime?                 @map("last_login_at")
+  createdAt               DateTime                  @default(now()) @map("created_at")
+  updatedAt               DateTime                  @updatedAt @map("updated_at")
+  deletedAt               DateTime?                 @map("deleted_at")
+  profile                 Profile?
+  roles                   UserRole[]
+  sessions                Session[]
+  passwordResetTokens     PasswordResetToken[]
   emailVerificationTokens EmailVerificationToken[]
-  notifications          Notification[]
-  notificationPreference NotificationPreference?
+  notifications           Notification[]
+  notificationPreference  NotificationPreference?
   organizationMemberships OrganizationMember[]
   conversationMemberships ConversationParticipant[]
   sentMessages            Message[]
-  ownedPlans             Plan[]                 @relation("PlanOwner")
-  planAccess             PlanAccess[]           @relation("PlanAccessUser")
-  grantedPlanAccess      PlanAccess[]           @relation("PlanAccessGrantor")
-  actorAuditLogs         AuditLog[]             @relation("AuditActor")
-  effectiveAuditLogs     AuditLog[]             @relation("AuditEffective")
-  impersonationsStarted  ImpersonationSession[] @relation("ImpersonationAdmin")
-  impersonationsReceived ImpersonationSession[] @relation("ImpersonationTarget")
-  externalIdentities     ExternalIdentity[]
+  ownedPlans              Plan[]                    @relation("PlanOwner")
+  planAccess              PlanAccess[]              @relation("PlanAccessUser")
+  grantedPlanAccess       PlanAccess[]              @relation("PlanAccessGrantor")
+  actorAuditLogs          AuditLog[]                @relation("AuditActor")
+  effectiveAuditLogs      AuditLog[]                @relation("AuditEffective")
+  impersonationsStarted   ImpersonationSession[]    @relation("ImpersonationAdmin")
+  impersonationsReceived  ImpersonationSession[]    @relation("ImpersonationTarget")
+  externalIdentities      ExternalIdentity[]
 }
 
 model ExternalIdentity {
@@ -173,11 +173,11 @@ model EmailVerificationToken {
 }
 
 model NotificationPreference {
-  userId                 String  @id @map("user_id") @db.Uuid
-  inAppPlanInvitations   Boolean @default(true) @map("in_app_plan_invitations")
-  inAppPlanUpdates       Boolean @default(true) @map("in_app_plan_updates")
-  emailPlanInvitations   Boolean @default(false) @map("email_plan_invitations")
-  user                   User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId               String  @id @map("user_id") @db.Uuid
+  inAppPlanInvitations Boolean @default(true) @map("in_app_plan_invitations")
+  inAppPlanUpdates     Boolean @default(true) @map("in_app_plan_updates")
+  emailPlanInvitations Boolean @default(false) @map("email_plan_invitations")
+  user                 User    @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 model Notification {
@@ -284,25 +284,27 @@ model ImpersonationSession {
 }
 
 model Plan {
-  id          String       @id @default(uuid()) @db.Uuid
-  ownerUserId String       @map("owner_user_id") @db.Uuid
-  name        String       @db.VarChar(160)
-  objective   String?      @db.Text
-  startDate   DateTime     @map("start_date") @db.Date
-  endDate     DateTime     @map("end_date") @db.Date
-  status      String       @default("active") @db.VarChar(30)
-  snapshot    Json
-  revision    Int          @default(1)
-  importKey   String?      @map("import_key") @db.VarChar(120)
-  createdAt   DateTime     @default(now()) @map("created_at")
-  updatedAt   DateTime     @updatedAt @map("updated_at")
-  deletedAt   DateTime?    @map("deleted_at")
-  sharingEnabled Boolean   @default(true) @map("sharing_enabled")
-  owner       User         @relation("PlanOwner", fields: [ownerUserId], references: [id], onDelete: Restrict)
-  access      PlanAccess[]
-  shareLink   PlanShareLink?
+  id               String         @id @default(uuid()) @db.Uuid
+  ownerUserId      String         @map("owner_user_id") @db.Uuid
+  name             String         @db.VarChar(160)
+  objective        String?        @db.Text
+  startDate        DateTime       @map("start_date") @db.Date
+  endDate          DateTime       @map("end_date") @db.Date
+  status           String         @default("active") @db.VarChar(30)
+  snapshot         Json
+  revision         Int            @default(1)
+  importKey        String?        @map("import_key") @db.VarChar(120)
+  clientMutationId String?        @map("client_mutation_id") @db.Uuid
+  createdAt        DateTime       @default(now()) @map("created_at")
+  updatedAt        DateTime       @updatedAt @map("updated_at")
+  deletedAt        DateTime?      @map("deleted_at")
+  sharingEnabled   Boolean        @default(true) @map("sharing_enabled")
+  owner            User           @relation("PlanOwner", fields: [ownerUserId], references: [id], onDelete: Restrict)
+  access           PlanAccess[]
+  shareLink        PlanShareLink?
 
   @@unique([ownerUserId, importKey])
+  @@unique([ownerUserId, clientMutationId])
   @@index([ownerUserId, deletedAt, updatedAt])
 }
 
