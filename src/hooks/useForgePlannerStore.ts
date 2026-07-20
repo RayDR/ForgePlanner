@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { createJSONStorage, persist } from 'zustand/middleware'
-import { useRoadmapStore } from './useRoadmapStore'
+import { resetRoadmapMemory, useRoadmapStore } from './useRoadmapStore'
 import type {
   DeletedPlanRecord,
   ForgePlan,
@@ -58,6 +58,7 @@ interface ForgePlannerStore extends ForgePlannerState {
   replaceRemotePlan: (plan: ForgePlan) => void
   markPlanSynced: (planId: string, remoteRevision: number) => void
   setRemoteSharingEnabled: (planId: string, enabled: boolean) => void
+  removeConfirmedRemotePlan: (remoteId: string) => void
 }
 
 function deriveCategories(snapshot: CanonicalPlan) {
@@ -378,12 +379,17 @@ export const useForgePlannerStore = create<ForgePlannerStore>()(
         const authoritative = plans.filter((plan) => !protectedKeys.has(plan.remoteId))
         const nextPlans = [...localOnly, ...protectedRemote, ...authoritative]
         const nextSync = { ...state.syncByPlanId, ...Object.fromEntries(authoritative.map((plan) => [plan.id, { state: 'synced' as const }])) }
+        const activePlanStillExists = !state.activePlanId || nextPlans.some((plan) => plan.id === state.activePlanId)
+        if (!activePlanStillExists) {
+          const { locale, theme } = useRoadmapStore.getState()
+          resetRoadmapMemory()
+          useRoadmapStore.getState().setLocale(locale)
+          useRoadmapStore.getState().setTheme(theme)
+        }
         return {
           plans: nextPlans,
           syncByPlanId: nextSync,
-          activePlanId: state.activePlanId && nextPlans.some((plan) => plan.id === state.activePlanId)
-            ? state.activePlanId
-            : undefined,
+          activePlanId: activePlanStillExists ? state.activePlanId : undefined,
         }
       }),
       replaceRemotePlan: (remote) => set((state) => {
@@ -393,6 +399,22 @@ export const useForgePlannerStore = create<ForgePlannerStore>()(
       }),
       markPlanSynced: (planId, remoteRevision) => set((state) => ({ plans: withUpdatedPlan(state.plans, planId, (plan) => ({ ...plan, remoteRevision })), syncByPlanId: { ...state.syncByPlanId, [planId]: { state: 'synced' } } })),
       setRemoteSharingEnabled: (planId, enabled) => set((state) => ({ plans: withUpdatedPlan(state.plans, planId, (plan) => ({ ...plan, remoteSharingEnabled: enabled })) })),
+      removeConfirmedRemotePlan: (remoteId) => set((state) => {
+        const removed = state.plans.find((plan) => plan.remoteId === remoteId)
+        if (!removed) return state
+        const remaining = state.plans.filter((plan) => plan.remoteId !== remoteId)
+        const activeWasRemoved = state.activePlanId === removed.id
+        if (activeWasRemoved) {
+          const next = remaining[0]
+          if (next) useRoadmapStore.getState().loadSnapshot(next.snapshot)
+          else {
+            const { locale, theme } = useRoadmapStore.getState()
+            resetRoadmapMemory(); useRoadmapStore.getState().setLocale(locale); useRoadmapStore.getState().setTheme(theme)
+          }
+        }
+        const nextSync = { ...state.syncByPlanId }; delete nextSync[removed.id]
+        return { plans: remaining, activePlanId: activeWasRemoved ? remaining[0]?.id : state.activePlanId, archivedPlanIds: state.archivedPlanIds.filter((id) => id !== removed.id), hiddenPlanIds: state.hiddenPlanIds.filter((id) => id !== removed.id), syncByPlanId: nextSync }
+      }),
       syncActivePlanFromRoadmap: () => {
         const state = get()
         if (!state.activePlanId) {

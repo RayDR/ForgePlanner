@@ -41,9 +41,13 @@ export function LocalPlanMigration() {
     if (!loaded.current) return
     const scope = getIdentityScope(); const generation = getScopeGeneration()
     const controller = new AbortController()
-    const timer = window.setTimeout(() => plans.filter((plan) => plan.remoteId && plan.remoteAccess !== 'viewer' && !conflicts[plan.id]).forEach((plan) => {
+    const timer = window.setTimeout(() => plans.filter((plan) => plan.remoteId && plan.remoteAccess !== 'viewer' && syncByPlanId[plan.id]?.state !== 'deleting' && !conflicts[plan.id]).forEach((plan) => {
       if (!scope || !isCurrentScope(scope, generation)) return
       const currentFingerprint = fingerprint(plan)
+      if (!savedFingerprints.current.has(plan.id)) {
+        savedFingerprints.current.set(plan.id, currentFingerprint)
+        return
+      }
       if (savedFingerprints.current.get(plan.id) === currentFingerprint || saving.current.has(plan.id)) return
       saving.current.add(plan.id); savedFingerprints.current.set(plan.id, currentFingerprint)
       setPlanSync(plan.id, { state: 'saving' })
@@ -67,7 +71,7 @@ export function LocalPlanMigration() {
       }).finally(() => saving.current.delete(plan.id))
     }), 1200)
     return () => { window.clearTimeout(timer); controller.abort() }
-  }, [plans, conflicts, markPlanSynced, reconcileRemotePlans, replaceRemotePlan, setPlanSync])
+  }, [plans, conflicts, markPlanSynced, reconcileRemotePlans, replaceRemotePlan, setPlanSync, syncByPlanId])
 
   function backup() { const blob = new Blob([JSON.stringify({ exportedAt: new Date().toISOString(), plans }, null, 2)], { type: 'application/json' }); const url = URL.createObjectURL(blob); const anchor = document.createElement('a'); anchor.href = url; anchor.download = 'northstar-local-plans-backup.json'; anchor.click(); URL.revokeObjectURL(url) }
   async function migrate() {

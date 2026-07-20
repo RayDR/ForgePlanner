@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { createPlanSchema, importPlansSchema, planPayloadSchema, updatePlanSchema } from './plan.schemas.js'
+import { createPlanSchema, importPlansSchema, planLifecycleSchema, planPayloadSchema, trashQuerySchema, updatePlanSchema } from './plan.schemas.js'
 import { createCanonicalPlanFixture } from '../../../shared/plan-contract/index.js'
 
 const plan = {
@@ -16,5 +16,11 @@ describe('plan payload validation', () => {
   it('requires a positive revision for updates', () => {
     expect(updatePlanSchema.parse({ snapshot: plan.snapshot, expectedRevision: 2 }).expectedRevision).toBe(2)
     expect(() => updatePlanSchema.parse({ snapshot: plan.snapshot })).toThrow()
+  })
+  it('validates lifecycle revisions and bounded trash pagination', () => {
+    expect(planLifecycleSchema.parse({ expectedRevision: 3 })).toEqual({ expectedRevision: 3 })
+    expect(trashQuerySchema.parse({})).toEqual({ page: 1, limit: 50 })
+    expect(() => planLifecycleSchema.parse({ expectedRevision: 0 })).toThrow()
+    expect(() => trashQuerySchema.parse({ limit: 101 })).toThrow()
   })
 })

@@ -205,6 +205,11 @@ Expected response:
 {"status":"ok"}
 ```
 
+## Operational documentation
+
+- [Canonical plan contract](docs/plan-contract.md)
+- [Server-backed plan trash and purge](docs/plan-trash.md)
+
 ## Remaining roadmap
 
 - organization channels, message editing/deletion and delivery/read receipts

@@ -6,7 +6,7 @@ import { copy } from '../i18n'
 import type { Locale } from '../i18n'
 import { getProjectYears, buildYearMonths, activitiesForMonth } from '../utils/dateUtils'
 import { getAverageProgress } from '../utils/progressUtils'
-import type { ForgePlan, PlanTemplateKey, PlanningMode } from '../types/forgePlanner'
+import type { ForgePlan, PlanTemplateKey, PlanningMode, ServerTrashPlan } from '../types/forgePlanner'
 import { Button } from '../ui/Button'
 import { Card } from '../ui/Card'
 import { IconButton } from '../ui/IconButton'
@@ -221,6 +221,7 @@ export function PlansHomeView() {
   const retainFailedCreate = useForgePlannerStore((state) => state.retainFailedCreate)
   const acceptServerPlan = useForgePlannerStore((state) => state.acceptServerPlan)
   const setPlanSync = useForgePlannerStore((state) => state.setPlanSync)
+  const removeConfirmedRemotePlan = useForgePlannerStore((state) => state.removeConfirmedRemotePlan)
 
   const [openMenuId, setOpenMenuId] = useState<string | null>(null)
   const [quickEditTarget, setQuickEditTarget] = useState<ForgePlan | null>(null)
@@ -231,10 +232,14 @@ export function PlansHomeView() {
   const menuRef = useRef<HTMLDivElement | null>(null)
   const plansScrollerRef = useRef<HTMLElement | null>(null)
   const undoTimerRef = useRef<number | null>(null)
-  const remoteDeleteTasksRef = useRef(new Map<string, Promise<void>>())
   const touchStartXRef = useRef<number | null>(null)
   const [showBackToTop, setShowBackToTop] = useState(false)
-  const [undoDelete, setUndoDelete] = useState<{ deletedId: string; title: string } | null>(null)
+  const [undoDelete, setUndoDelete] = useState<{ kind: 'local'; deletedId: string; title: string } | { kind: 'remote'; remoteId: string; revision: number; title: string } | null>(null)
+  const [accountTrash, setAccountTrash] = useState<ServerTrashPlan[]>([])
+  const [accountTrashTotal, setAccountTrashTotal] = useState(0)
+  const [trashPage, setTrashPage] = useState(1)
+  const [trashLoading, setTrashLoading] = useState(false)
+  const [trashError, setTrashError] = useState('')
   const [sharingPlan, setSharingPlan] = useState<ForgePlan | null>(null)
   const [confirmClearDeleted, setConfirmClearDeleted] = useState(false)
   const [createSaving, setCreateSaving] = useState(false)
@@ -269,6 +274,21 @@ export function PlansHomeView() {
   }, [])
 
   useEffect(() => () => createRequestRef.current?.abort(), [])
+
+  useEffect(() => {
+    if (!session) return
+    const scope = getIdentityScope(); const generation = getScopeGeneration(); const controller = new AbortController()
+    if (!scope) return
+    // Clear the prior in-memory response before loading this identity's server trash.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setAccountTrash([]); setAccountTrashTotal(0); setTrashPage(1); setTrashLoading(true); setTrashError('')
+    void planApi.trash(controller.signal).then((result) => {
+      if (isCurrentScope(scope, generation)) { setAccountTrash(result.plans); setAccountTrashTotal(result.total) }
+    }).catch((reason) => {
+      if (!controller.signal.aborted && isCurrentScope(scope, generation)) setTrashError(reason instanceof Error ? reason.message : String(reason))
+    }).finally(() => { if (isCurrentScope(scope, generation)) setTrashLoading(false) })
+    return () => controller.abort()
+  }, [session])
 
   useEffect(() => {
     if (quickEditTarget) {
@@ -415,18 +435,36 @@ export function PlansHomeView() {
     setQuickEditTarget(plan)
   }
 
-  function handleDeletePlan(plan: ForgePlan) {
+  async function handleDeletePlan(plan: ForgePlan) {
+    if (session && plan.remoteId) {
+      if (syncByPlanId[plan.id]?.state === 'deleting') return
+      const scope = getIdentityScope(); const generation = getScopeGeneration()
+      if (!scope) return
+      setPlanSync(plan.id, { state: 'deleting' })
+      try {
+        const result = await planApi.remove(plan.remoteId, plan.remoteRevision ?? 1)
+        if (!isCurrentScope(scope, generation)) return
+        removeConfirmedRemotePlan(plan.remoteId)
+        const alreadyInTrash = accountTrash.some((item) => item.remoteId === result.plan.remoteId)
+        setAccountTrash((current) => [result.plan, ...current.filter((item) => item.remoteId !== result.plan.remoteId)])
+        if (!alreadyInTrash) setAccountTrashTotal((total) => total + 1)
+        if (undoTimerRef.current) window.clearTimeout(undoTimerRef.current)
+        setUndoDelete({ kind: 'remote', remoteId: plan.remoteId, revision: result.plan.remoteRevision ?? plan.remoteRevision ?? 1, title: plan.title })
+        undoTimerRef.current = window.setTimeout(() => setUndoDelete(null), 5000)
+      } catch (reason) {
+        if (isCurrentScope(scope, generation)) {
+          setPlanSync(plan.id, { state: 'synced' })
+          setTrashError(reason instanceof Error ? reason.message : String(reason))
+        }
+      }
+      return
+    }
     deletePlan(plan.id)
     const deleted = useForgePlannerStore.getState().deletedPlans.find((item) => item.plan.id === plan.id)
     if (!deleted) return
     if (undoTimerRef.current) window.clearTimeout(undoTimerRef.current)
-    setUndoDelete({ deletedId: deleted.id, title: plan.title })
+    setUndoDelete({ kind: 'local', deletedId: deleted.id, title: plan.title })
     undoTimerRef.current = window.setTimeout(() => setUndoDelete(null), 5000)
-    if (plan.remoteId) {
-      const task = planApi.remove(plan.remoteId).catch((reason) => { restoreDeletedPlan(deleted.id); throw reason }).finally(() => remoteDeleteTasksRef.current.delete(deleted.id))
-      remoteDeleteTasksRef.current.set(deleted.id, task)
-      void task.catch(() => undefined)
-    }
   }
 
   async function handleArchivePlan(plan: ForgePlan) {
@@ -445,34 +483,66 @@ export function PlansHomeView() {
     setRemoteSharingEnabled(plan.id, enabled)
   }
 
-  async function permanentlyRemove(item: typeof deletedPlans[number]) {
+  async function permanentlyRemoveLocal(item: typeof deletedPlans[number]) {
     if (!window.confirm(locale === 'es' ? `“${item.plan.title}” se eliminará definitivamente. Esta acción no se puede deshacer.` : `“${item.plan.title}” will be permanently deleted. This cannot be undone.`)) return
-    await remoteDeleteTasksRef.current.get(item.id)?.catch(() => undefined)
-    if (item.plan.remoteId) await planApi.purge(item.plan.remoteId)
     permanentlyDeletePlan(item.id)
+  }
+
+  async function permanentlyRemoveRemote(item: ServerTrashPlan) {
+    if (!item.remoteId || !window.confirm(locale === 'es' ? `“${item.title}” se eliminará definitivamente. Esta acción no se puede deshacer.` : `“${item.title}” will be permanently deleted. This cannot be undone.`)) return
+    const scope = getIdentityScope(); const generation = getScopeGeneration()
+    if (!scope) return
+    try {
+      await planApi.purge(item.remoteId, item.remoteRevision ?? 1)
+      if (!isCurrentScope(scope, generation)) return
+      setAccountTrash((current) => current.filter((plan) => plan.remoteId !== item.remoteId))
+      setAccountTrashTotal((total) => Math.max(0, total - 1))
+    } catch (reason) { if (isCurrentScope(scope, generation)) setTrashError(reason instanceof Error ? reason.message : String(reason)) }
   }
 
   async function permanentlyRemoveAll() {
     setConfirmClearDeleted(false)
-    await Promise.all(deletedPlans.map((item) => remoteDeleteTasksRef.current.get(item.id)?.catch(() => undefined)))
-    await Promise.all(deletedPlans.map((item) => item.plan.remoteId ? planApi.purge(item.plan.remoteId) : Promise.resolve()))
-    clearDeletedPlans()
+    if (session) {
+      const scope = getIdentityScope(); const generation = getScopeGeneration()
+      if (!scope) return
+      const first = await planApi.trash(undefined, 1, 100); const all = [...first.plans]
+      for (let page = 2; all.length < first.total; page += 1) all.push(...(await planApi.trash(undefined, page, 100)).plans)
+      if (!isCurrentScope(scope, generation)) return
+      const results = await Promise.allSettled(all.filter((item) => item.remoteId).map((item) => planApi.purge(item.remoteId!, item.remoteRevision ?? 1)))
+      if (!isCurrentScope(scope, generation)) return
+      if (results.some((result) => result.status === 'rejected')) setTrashError(locale === 'es' ? 'Algunos planes no pudieron eliminarse.' : 'Some plans could not be deleted.')
+      const result = await planApi.trash(); setAccountTrash(result.plans); setAccountTrashTotal(result.total)
+    } else clearDeletedPlans()
   }
 
   async function undoLastDelete() {
     if (!undoDelete) return
-    const deleted = deletedPlans.find((item) => item.id === undoDelete.deletedId)
-    await remoteDeleteTasksRef.current.get(undoDelete.deletedId)?.catch(() => undefined)
-    restoreDeletedPlan(undoDelete.deletedId)
-    if (deleted?.plan.remoteId) await planApi.restore(deleted.plan.remoteId).catch(() => undefined)
+    if (undoDelete.kind === 'remote') {
+      const scope = getIdentityScope(); const generation = getScopeGeneration()
+      if (!scope) return
+      try {
+        const result = await planApi.restore(undoDelete.remoteId, undoDelete.revision)
+        if (!isCurrentScope(scope, generation)) return
+        acceptServerPlan(result.plan); setAccountTrash((current) => current.filter((item) => item.remoteId !== undoDelete.remoteId)); setAccountTrashTotal((total) => Math.max(0, total - 1))
+      } catch (reason) { if (isCurrentScope(scope, generation)) setTrashError(reason instanceof Error ? reason.message : String(reason)); return }
+    } else restoreDeletedPlan(undoDelete.deletedId)
     if (undoTimerRef.current) window.clearTimeout(undoTimerRef.current)
     setUndoDelete(null)
   }
 
-  async function restorePlan(item: typeof deletedPlans[number]) {
-    await remoteDeleteTasksRef.current.get(item.id)?.catch(() => undefined)
+  async function restoreLocalPlan(item: typeof deletedPlans[number]) {
     restoreDeletedPlan(item.id)
-    if (item.plan.remoteId) await planApi.restore(item.plan.remoteId).catch(() => undefined)
+  }
+
+  async function restoreRemotePlan(item: ServerTrashPlan) {
+    if (!item.remoteId) return
+    const scope = getIdentityScope(); const generation = getScopeGeneration()
+    if (!scope) return
+    try {
+      const result = await planApi.restore(item.remoteId, item.remoteRevision ?? 1)
+      if (!isCurrentScope(scope, generation)) return
+      acceptServerPlan(result.plan); setAccountTrash((current) => current.filter((plan) => plan.remoteId !== item.remoteId)); setAccountTrashTotal((total) => Math.max(0, total - 1))
+    } catch (reason) { if (isCurrentScope(scope, generation)) setTrashError(reason instanceof Error ? reason.message : String(reason)) }
   }
 
   function dismissUndo() {
@@ -512,7 +582,7 @@ export function PlansHomeView() {
           {([
             ['active', t.yourPlans, activePlans.length],
             ['archived', t.archived, archivedPlans.length],
-            ['deleted', t.recentlyDeleted, deletedPlans.length],
+            ['deleted', t.recentlyDeleted, session ? accountTrashTotal : deletedPlans.length],
           ] as const).map(([filter, label, count]) => (
             <button key={filter} type="button" className={plansFilter === filter ? 'plans-filter-tab is-active' : 'plans-filter-tab'} onClick={() => setPlansFilter(filter)}>
               {label}<span>{count}</span>
@@ -547,7 +617,7 @@ export function PlansHomeView() {
                       <div className="plan-card__title-block">
                         <p className="plan-card__kicker">{plan.planningMode === 'monthly' ? t.monthlyView : t.annualView}</p>
                         <h2 onDoubleClick={(event) => editPlan(event, plan)} title={locale === 'es' ? 'Doble clic para editar' : 'Double-click to edit'}>{plan.title}</h2>
-                        {sync && sync.state !== 'synced' ? <span className={`plan-access-badge plan-sync-${sync.state}`}>{sync.state === 'saving' ? (locale === 'es' ? 'Guardando…' : 'Saving…') : sync.state === 'offline' ? (locale === 'es' ? 'Sin conexión' : 'Offline') : sync.state === 'failed' ? (locale === 'es' ? 'Error al guardar' : 'Save failed') : sync.state}</span> : null}
+                        {sync && sync.state !== 'synced' ? <span className={`plan-access-badge plan-sync-${sync.state}`}>{sync.state === 'saving' ? (locale === 'es' ? 'Guardando…' : 'Saving…') : sync.state === 'deleting' ? (locale === 'es' ? 'Eliminando…' : 'Deleting…') : sync.state === 'offline' ? (locale === 'es' ? 'Sin conexión' : 'Offline') : sync.state === 'failed' ? (locale === 'es' ? 'Error al guardar' : 'Save failed') : sync.state}</span> : null}
                         {plan.remoteAccess && plan.remoteAccess !== 'owner' ? <span className="plan-access-badge">{plan.remoteAccess === 'editor' ? (locale === 'es' ? 'Compartido · editor' : 'Shared · editor') : (locale === 'es' ? 'Compartido · lectura' : 'Shared · view')}</span> : null}
                       </div>
                       <div className="plan-card__actions" ref={openMenuId === plan.id ? menuRef : undefined}>
@@ -565,7 +635,7 @@ export function PlansHomeView() {
                             <button type="button" onClick={() => { duplicatePlan(plan.id); closeMenu() }}><CopyIcon width={16} height={16} /> {t.duplicate}</button>
                             {plan.remoteAccess === 'owner' || !plan.remoteAccess ? <button type="button" onClick={() => { void handleArchivePlan(plan); closeMenu() }}><ArchiveIcon width={16} height={16} /> {t.archive}</button> : null}
                             <button type="button" onClick={() => { handleExportPlan(plan); closeMenu() }}><DownloadIcon width={16} height={16} /> {t.export}</button>
-                            {plan.remoteAccess === 'owner' || !plan.remoteAccess ? <button type="button" className="danger" onClick={() => { handleDeletePlan(plan); closeMenu() }}><TrashIcon width={16} height={16} /> {t.delete}</button> : null}
+                            {plan.remoteAccess === 'owner' || !plan.remoteAccess ? <button type="button" className="danger" disabled={sync?.state === 'deleting'} onClick={() => { void handleDeletePlan(plan); closeMenu() }}><TrashIcon width={16} height={16} /> {t.delete}</button> : null}
                           </div>
                         ) : null}
                       </div>
@@ -609,14 +679,24 @@ export function PlansHomeView() {
                   <div className="compact-plan-card__actions">
                     {plan.remoteId && (plan.remoteAccess === 'owner' || !plan.remoteAccess) ? <><IconButton label={t.manageAccess} onClick={() => setSharingPlan(plan)}><UsersIcon width={16} height={16} /></IconButton><IconButton label={plan.remoteSharingEnabled === false ? t.unlockAccess : t.makePrivate} onClick={() => void togglePlanSharing(plan)}><LockIcon width={16} height={16} /></IconButton></> : null}
                     <IconButton label={t.unarchive} onClick={() => void handleUnarchivePlan(plan)}><ArchiveIcon width={16} height={16} /></IconButton>
-                    <IconButton label={t.delete} onClick={() => handleDeletePlan(plan)}><TrashIcon width={16} height={16} /></IconButton>
+                    <IconButton label={t.delete} onClick={() => void handleDeletePlan(plan)}><TrashIcon width={16} height={16} /></IconButton>
                   </div>
                 </Card>
               )) : <div className="empty-state">{t.noArchived}</div>)}
-              {plansFilter === 'deleted' && (deletedPlans.length ? <><div className="filtered-plans-toolbar"><span>{deletedPlans.length} {locale === 'es' ? 'planes eliminados' : 'deleted plans'}</span><button type="button" className="btn btn-danger" onClick={() => setConfirmClearDeleted(true)}>{locale === 'es' ? 'Borrar todo' : 'Delete all'}</button></div>{deletedPlans.map((item) => (
+              {plansFilter === 'deleted' && session && (trashLoading
+                ? <div className="empty-state" aria-live="polite">{locale === 'es' ? 'Cargando papelera…' : 'Loading trash…'}</div>
+                : trashError
+                  ? <div className="empty-state"><p className="auth-error">{trashError}</p><button type="button" className="btn" onClick={() => { const scope = getIdentityScope(); const generation = getScopeGeneration(); if (!scope) return; setTrashLoading(true); void planApi.trash().then((result) => { if (isCurrentScope(scope, generation)) { setAccountTrash(result.plans); setAccountTrashTotal(result.total); setTrashPage(1); setTrashError('') } }).catch((reason) => { if (isCurrentScope(scope, generation)) setTrashError(reason instanceof Error ? reason.message : String(reason)) }).finally(() => { if (isCurrentScope(scope, generation)) setTrashLoading(false) }) }}>{locale === 'es' ? 'Reintentar' : 'Retry'}</button></div>
+                  : accountTrash.length ? <><div className="filtered-plans-toolbar"><span>{accountTrashTotal} {locale === 'es' ? 'planes en la papelera de la cuenta' : 'plans in account trash'}</span><button type="button" className="btn btn-danger" onClick={() => setConfirmClearDeleted(true)}>{locale === 'es' ? 'Borrar todo' : 'Delete all'}</button></div>{accountTrash.map((item) => (
+                    <Card key={item.remoteId ?? item.id} className="compact-plan-card filtered-plan-card filtered-plan-card--deleted">
+                      <div><strong>{item.title}</strong><small>{locale === 'es' ? 'Eliminado' : 'Deleted'}: {item.deletedAt.slice(0, 10)} · {locale === 'es' ? 'Se purga' : 'Purges'}: {item.purgeAfter.slice(0, 10)}</small></div>
+                      <div className="compact-plan-card__actions"><IconButton label={t.restore} disabled={!item.restoreEligible} onClick={() => void restoreRemotePlan(item)}><DownloadIcon width={16} height={16} /></IconButton><IconButton label={locale === 'es' ? 'Borrar definitivamente' : 'Delete permanently'} onClick={() => void permanentlyRemoveRemote(item)}><TrashIcon width={16} height={16} /></IconButton></div>
+                    </Card>
+                  ))}{accountTrash.length < accountTrashTotal ? <button type="button" className="btn" onClick={() => { const scope = getIdentityScope(); const generation = getScopeGeneration(); const nextPage = trashPage + 1; if (!scope) return; void planApi.trash(undefined, nextPage, 50).then((result) => { if (isCurrentScope(scope, generation)) { setTrashPage(nextPage); setAccountTrash((current) => [...current, ...result.plans.filter((item) => !current.some((existing) => existing.remoteId === item.remoteId))]) } }) }}>{locale === 'es' ? 'Cargar más' : 'Load more'}</button> : null}</> : <div className="empty-state">{t.noDeleted}</div>)}
+              {plansFilter === 'deleted' && !session && (deletedPlans.length ? <><div className="filtered-plans-toolbar"><span>{deletedPlans.length} {locale === 'es' ? 'planes en la papelera local' : 'plans in local trash'}</span><button type="button" className="btn btn-danger" onClick={() => setConfirmClearDeleted(true)}>{locale === 'es' ? 'Borrar todo' : 'Delete all'}</button></div>{deletedPlans.map((item) => (
                 <Card key={item.id} className="compact-plan-card filtered-plan-card filtered-plan-card--deleted">
                   <div><strong>{item.plan.title}</strong><small>{locale === 'es' ? 'Se elimina automáticamente' : 'Automatically removed'}: {item.expiresAt.slice(0, 10)}</small></div>
-                  <div className="compact-plan-card__actions"><IconButton label={t.restore} onClick={() => void restorePlan(item)}><DownloadIcon width={16} height={16} /></IconButton><IconButton label={locale === 'es' ? 'Borrar definitivamente' : 'Delete permanently'} onClick={() => void permanentlyRemove(item)}><TrashIcon width={16} height={16} /></IconButton></div>
+                  <div className="compact-plan-card__actions"><IconButton label={t.restore} onClick={() => void restoreLocalPlan(item)}><DownloadIcon width={16} height={16} /></IconButton><IconButton label={locale === 'es' ? 'Borrar definitivamente' : 'Delete permanently'} onClick={() => void permanentlyRemoveLocal(item)}><TrashIcon width={16} height={16} /></IconButton></div>
                 </Card>
               ))}</> : <div className="empty-state">{t.noDeleted}</div>)}
             </section>

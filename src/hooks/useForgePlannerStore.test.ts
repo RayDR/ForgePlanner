@@ -35,10 +35,31 @@ describe('authenticated plan cache and outbox', () => {
     expect(store.getState().plans.map((item) => item.id)).toEqual(['outbox:failed'])
   })
 
+  it('clears the route-derived roadmap snapshot when reconciliation removes the active remote plan', async () => {
+    const remote = plan('server', 'remote-server')
+    const { useRoadmapStore } = await import('./useRoadmapStore')
+    store.setState({ plans: [remote], activePlanId: remote.id, syncByPlanId: { [remote.id]: { state: 'synced' } } })
+    useRoadmapStore.setState((state) => ({ project: { ...state.project, name: 'Private plan from another device' } }))
+
+    store.getState().reconcileRemotePlans([])
+
+    expect(store.getState().activePlanId).toBeUndefined()
+    expect(useRoadmapStore.getState().project.name).not.toBe('Private plan from another device')
+  })
+
   it('preserves a failed update while the server still authorizes the same plan', () => {
     const local = { ...plan('server', 'server'), title: 'Local unsaved edit' }
     store.setState({ plans: [local], syncByPlanId: { server: { state: 'failed', error: { code: 'NETWORK', message: 'offline' } } } })
     store.getState().reconcileRemotePlans([{ ...local, title: 'Remote title' }])
     expect(store.getState().plans[0].title).toBe('Local unsaved edit')
+  })
+
+  it('removes a server-confirmed deleted plan and clears active selection and sync metadata', () => {
+    const remote = plan('server', 'remote-server')
+    store.setState({ plans: [remote], activePlanId: remote.id, syncByPlanId: { [remote.id]: { state: 'synced' } } })
+    store.getState().removeConfirmedRemotePlan('remote-server')
+    expect(store.getState().plans).toEqual([])
+    expect(store.getState().activePlanId).toBeUndefined()
+    expect(store.getState().syncByPlanId[remote.id]).toBeUndefined()
   })
 })

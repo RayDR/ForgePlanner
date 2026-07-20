@@ -17,3 +17,8 @@ export const createPlanSchema = planPayloadBase.extend({ clientMutationId: z.str
 const importedPlanSchema = planPayloadBase.extend({ importKey: z.string().min(1).max(120) }).strict()
 export const importPlansSchema = z.object({ plans: z.array(importedPlanSchema).min(1).max(100) }).strict()
 export const updatePlanSchema = z.object({ snapshot: snapshotSchema, expectedRevision: z.number().int().positive() }).strict()
+export const planLifecycleSchema = z.object({ expectedRevision: z.number().int().positive() }).strict()
+export const trashQuerySchema = z.object({
+  page: z.coerce.number().int().positive().default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+}).strict()

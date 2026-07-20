@@ -1,8 +1,9 @@
-import type { ForgePlan } from '../types/forgePlanner'
+import type { ForgePlan, ServerTrashPlan } from '../types/forgePlanner'
 import { notifySessionInvalid } from '../auth/sessionInvalidation'
 import { parsePlanDocument } from '../../shared/plan-contract/index.js'
 
 export interface RemotePlan { id: string; importKey?: string | null; accessLevel?: 'owner' | 'editor' | 'viewer'; sharingEnabled: boolean; name: string; objective: string | null; startDate: string; endDate: string; status: string; snapshot: unknown; revision: number; createdAt: string; updatedAt: string }
+export interface RemoteTrashPlan { id: string; sharingEnabled: boolean; name: string; objective: string | null; startDate: string; endDate: string; revision: number; deletedAt: string; purgeAfter: string; restoreEligible: boolean }
 
 export class PlanRequestError extends Error {
   status: number
@@ -53,8 +54,17 @@ function fromRemote(remote: RemotePlan, remoteLinkId?: string): ForgePlan {
   return { id: remote.importKey ?? remote.id, remoteId: remote.id, remoteAccess: remote.accessLevel ?? 'owner', remoteRevision: remote.revision, remoteSharingEnabled: remote.sharingEnabled, remoteLinkId, title: snapshot.project.name, description: snapshot.project.objective, startDate: snapshot.project.startDate, endDate: snapshot.project.endDate, planningMode: snapshot.metadata.planningMode ?? 'auto', templateKey: snapshot.metadata.templateKey, categories: snapshot.project.categoryDefinitions.map((item) => item.key), monthlyViewPreference: result.extractedUiState?.monthlyViewPreference ?? 'list', snapshot, createdAt: remote.createdAt, updatedAt: remote.updatedAt }
 }
 
+function fromRemoteTrash(remote: RemoteTrashPlan): ServerTrashPlan {
+  if (!remote.deletedAt || !remote.purgeAfter || typeof remote.restoreEligible !== 'boolean') throw new PlanRequestError(500, 'INVALID_TRASH_STATE', 'The deleted plan has incomplete retention metadata.')
+  return { id: remote.id, remoteId: remote.id, remoteRevision: remote.revision, remoteSharingEnabled: remote.sharingEnabled, title: remote.name, description: remote.objective ?? '', startDate: remote.startDate, endDate: remote.endDate, deletedAt: remote.deletedAt, purgeAfter: remote.purgeAfter, restoreEligible: remote.restoreEligible }
+}
+
 export const planApi = {
   list: async (signal?: AbortSignal) => (await request<{ plans: RemotePlan[] }>('', { signal })).plans.map((plan) => fromRemote(plan)),
+  trash: async (signal?: AbortSignal, page = 1, limit = 50) => {
+    const result = await request<{ plans: RemoteTrashPlan[]; total: number; page: number; limit: number }>(`/trash?page=${page}&limit=${limit}`, { signal })
+    return { ...result, plans: result.plans.map(fromRemoteTrash) }
+  },
   create: async (plan: ForgePlan, clientMutationId: string, signal?: AbortSignal) => {
     const result = await request<{ plan: RemotePlan; created: boolean }>('', { method: 'POST', body: JSON.stringify({ ...payload(plan), clientMutationId }), signal })
     return { plan: fromRemote(result.plan), created: result.created }
@@ -63,7 +73,13 @@ export const planApi = {
   import: async (plans: ForgePlan[]) => (await request<{ plans: RemotePlan[] }>('/import', { method: 'POST', body: JSON.stringify({ plans: plans.map((plan) => ({ ...payload(plan), importKey: plan.id })) }) })).plans,
   update: async (plan: ForgePlan, expectedRevision = plan.remoteRevision ?? 1, signal?: AbortSignal) => fromRemote((await request<{ plan: RemotePlan }>(plan.remoteLinkId ? `/link/${plan.remoteLinkId}` : `/${plan.remoteId}`, { method: 'PATCH', body: JSON.stringify({ ...payload(plan), expectedRevision }), signal })).plan, plan.remoteLinkId),
   openSharedLink: async (linkId: string) => fromRemote((await request<{ plan: RemotePlan }>(`/link/${linkId}`)).plan, linkId),
-  remove: (remoteId: string) => request<void>(`/${remoteId}`, { method: 'DELETE' }),
-  restore: async (remoteId: string) => fromRemote((await request<{ plan: RemotePlan }>(`/${remoteId}/restore`, { method: 'POST', body: '{}' })).plan),
-  purge: (remoteId: string) => request<void>(`/${remoteId}/permanent`, { method: 'DELETE' }),
+  remove: async (remoteId: string, expectedRevision: number) => {
+    const result = await request<{ plan: RemoteTrashPlan; deleted: boolean }>(`/${remoteId}`, { method: 'DELETE', body: JSON.stringify({ expectedRevision }) })
+    return { plan: fromRemoteTrash(result.plan), deleted: result.deleted }
+  },
+  restore: async (remoteId: string, expectedRevision: number) => {
+    const result = await request<{ plan: RemotePlan; restored: boolean }>(`/${remoteId}/restore`, { method: 'POST', body: JSON.stringify({ expectedRevision }) })
+    return { plan: fromRemote(result.plan), restored: result.restored }
+  },
+  purge: (remoteId: string, expectedRevision: number) => request<{ deleted: boolean }>(`/${remoteId}/permanent`, { method: 'DELETE', body: JSON.stringify({ expectedRevision }) }),
 }

@@ -49,6 +49,7 @@ model User {
   conversationMemberships ConversationParticipant[]
   sentMessages            Message[]
   ownedPlans              Plan[]                    @relation("PlanOwner")
+  deletedPlans            Plan[]                    @relation("PlanDeletedBy")
   planAccess              PlanAccess[]              @relation("PlanAccessUser")
   grantedPlanAccess       PlanAccess[]              @relation("PlanAccessGrantor")
   actorAuditLogs          AuditLog[]                @relation("AuditActor")
@@ -298,14 +299,18 @@ model Plan {
   createdAt        DateTime       @default(now()) @map("created_at")
   updatedAt        DateTime       @updatedAt @map("updated_at")
   deletedAt        DateTime?      @map("deleted_at")
+  purgeAfter       DateTime?      @map("purge_after")
+  deletedByUserId  String?        @map("deleted_by_user_id") @db.Uuid
   sharingEnabled   Boolean        @default(true) @map("sharing_enabled")
   owner            User           @relation("PlanOwner", fields: [ownerUserId], references: [id], onDelete: Restrict)
+  deletedBy        User?          @relation("PlanDeletedBy", fields: [deletedByUserId], references: [id], onDelete: SetNull)
   access           PlanAccess[]
   shareLink        PlanShareLink?
 
   @@unique([ownerUserId, importKey])
   @@unique([ownerUserId, clientMutationId])
   @@index([ownerUserId, deletedAt, updatedAt])
+  @@index([purgeAfter, id])
 }
 
 model PlanShareLink {

@@ -38,8 +38,22 @@ export interface DeletedPlanRecord {
   expiresAt: string
 }
 
+export interface ServerTrashPlan {
+  id: string
+  remoteId: string
+  remoteRevision: number
+  remoteSharingEnabled: boolean
+  title: string
+  description: string
+  startDate: string
+  endDate: string
+  deletedAt: string
+  purgeAfter: string
+  restoreEligible: boolean
+}
+
 export interface PlanSyncMetadata {
-  state: 'local' | 'saving' | 'synced' | 'failed' | 'offline' | 'conflict'
+  state: 'local' | 'saving' | 'deleting' | 'synced' | 'failed' | 'offline' | 'conflict'
   clientMutationId?: string
   error?: { code: string; message: string }
 }

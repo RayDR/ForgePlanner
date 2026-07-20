@@ -10,7 +10,7 @@ describe('explicit guest plan migration', () => {
     schemaVersion: 1,
     activePlanId: 'guest-plan',
     plans: [{ id: 'guest-plan' }, { id: 'already-remote', remoteId: 'remote-id' }],
-    archivedPlanIds: [], hiddenPlanIds: [], deletedPlans: [],
+    archivedPlanIds: [], hiddenPlanIds: [], deletedPlans: [{ id: 'guest-trash', plan: { id: 'deleted-guest' }, deletedAt: '2026-01-01T00:00:00.000Z', expiresAt: '2026-02-01T00:00:00.000Z' }],
   } as unknown as ForgePlannerState
 
   beforeEach(() => {
@@ -29,5 +29,6 @@ describe('explicit guest plan migration', () => {
     const persisted = JSON.parse(storage.getItem(scopedKey(GUEST_SCOPE, 'forge-planner-state'))!) as { state: ForgePlannerState }
     expect(persisted.state.plans.map((plan) => plan.id)).toEqual(['already-remote'])
     expect(persisted.state.activePlanId).toBeUndefined()
+    expect(persisted.state.deletedPlans.map((item) => item.id)).toEqual(['guest-trash'])
   })
 })
