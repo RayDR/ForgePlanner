@@ -1,18 +1,19 @@
 import { z } from 'zod'
+import { parsePlanDocument } from '../../../shared/plan-contract/index.js'
 
-const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/)
-const snapshot = z.object({ schemaVersion: z.number().int().positive(), project: z.record(z.string(), z.unknown()), activities: z.array(z.unknown()) }).loose()
-const planPayloadBase = z.object({
-  name: z.string().trim().min(1).max(160),
-  objective: z.string().max(20_000).optional().default(''),
-  startDate: date,
-  endDate: date,
-  status: z.string().max(30).default('active'),
-  snapshot,
+const snapshotSchema = z.unknown().transform((value, context) => {
+  const result = parsePlanDocument(value)
+  if (!result.success) {
+    for (const issue of result.issues.slice(0, 100)) context.addIssue({ code: 'custom', path: issue.path, message: `${issue.code}: ${issue.message}` })
+    return z.NEVER
+  }
+  return result.plan
 })
 
-export const planPayloadSchema = planPayloadBase.refine((value) => value.startDate <= value.endDate, { message: 'End date must not precede start date.' })
-export const createPlanSchema = planPayloadBase.extend({ clientMutationId: z.string().uuid() }).refine((value) => value.startDate <= value.endDate, { message: 'End date must not precede start date.' })
-const importedPlanSchema = planPayloadBase.extend({ importKey: z.string().min(1).max(120) }).refine((value) => value.startDate <= value.endDate, { message: 'End date must not precede start date.' })
-export const importPlansSchema = z.object({ plans: z.array(importedPlanSchema).min(1).max(100) })
-export const updatePlanSchema = planPayloadBase.partial().extend({ expectedRevision: z.number().int().positive() })
+const planPayloadBase = z.object({ snapshot: snapshotSchema, status: z.enum(['active']).optional().default('active') }).strict()
+
+export const planPayloadSchema = planPayloadBase
+export const createPlanSchema = planPayloadBase.extend({ clientMutationId: z.string().uuid() }).strict()
+const importedPlanSchema = planPayloadBase.extend({ importKey: z.string().min(1).max(120) }).strict()
+export const importPlansSchema = z.object({ plans: z.array(importedPlanSchema).min(1).max(100) }).strict()
+export const updatePlanSchema = z.object({ snapshot: snapshotSchema, expectedRevision: z.number().int().positive() }).strict()

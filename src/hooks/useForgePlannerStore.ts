@@ -10,10 +10,10 @@ import type {
   PlanTemplateKey,
   PlanningMode,
 } from '../types/forgePlanner'
-import type { PersistedRoadmapState } from '../utils/roadmapState'
+import type { CanonicalPlan } from '../../shared/plan-contract/index.js'
+import { CURRENT_PLAN_SCHEMA_VERSION, PLANNER_CONTRACT_VERSION } from '../../shared/plan-contract/index.js'
 import type { Activity, CategoryMeta } from '../types/roadmap'
 import { DEFAULT_PROJECT_STATUSES } from '../utils/roadmapState'
-import { getClosestActiveMonth } from '../utils/dateUtils'
 import { createIdentityScopedStorage } from '../persistence/scopedStorage'
 
 const STORE_VERSION = 2
@@ -60,7 +60,7 @@ interface ForgePlannerStore extends ForgePlannerState {
   setRemoteSharingEnabled: (planId: string, enabled: boolean) => void
 }
 
-function deriveCategories(snapshot: PersistedRoadmapState) {
+function deriveCategories(snapshot: CanonicalPlan) {
   if (snapshot.project.categoryDefinitions?.length) return snapshot.project.categoryDefinitions.map((category) => category.key)
   const categories = new Set<string>()
   for (const activity of snapshot.activities) {
@@ -72,7 +72,7 @@ function deriveCategories(snapshot: PersistedRoadmapState) {
   return Array.from(categories)
 }
 
-function buildNorthStarPlan(snapshot: PersistedRoadmapState): ForgePlan {
+function buildNorthStarPlan(snapshot: CanonicalPlan): ForgePlan {
   const now = new Date().toISOString()
   return {
     id: snapshot.project.id || crypto.randomUUID(),
@@ -101,13 +101,12 @@ function createPlanSnapshot(draft: {
   savingsMode?: 'free' | 'monthly-target'
   defaultMonthlyTarget?: number
   categoryDefinitions?: CategoryMeta[]
-}): PersistedRoadmapState {
-  const year = Number(draft.startDate.slice(0, 4))
+}): CanonicalPlan {
   const id = crypto.randomUUID()
-  const selectedMonthId = getClosestActiveMonth(year, draft.startDate, draft.endDate)
 
   return {
-    schemaVersion: 7,
+    schemaVersion: CURRENT_PLAN_SCHEMA_VERSION,
+    metadata: { origin: draft.categoryDefinitions ? 'manual' : 'manual', contentLanguage: draft.locale, plannerContractVersion: PLANNER_CONTRACT_VERSION },
     project: {
       id,
       name: draft.title,
@@ -117,7 +116,6 @@ function createPlanSnapshot(draft: {
       endDate: draft.endDate,
       plannedEndDate: draft.endDate,
       actualEndDate: draft.endDate,
-      selectedYear: year,
       goals: [],
       milestones: [],
       statusDefinitions: DEFAULT_PROJECT_STATUSES,
@@ -138,16 +136,13 @@ function createPlanSnapshot(draft: {
     activities: [],
     trash: [],
     relationships: [],
-    selectedYear: year,
-    selectedMonthId,
-    locale: draft.locale,
-    theme: draft.theme,
   }
 }
 
 export function createForgePlanDraft(draft: PlanDraftInput, locale: 'en' | 'es', theme: 'light' | 'dark', id = crypto.randomUUID()): ForgePlan {
   const snapshot = createPlanSnapshot({ ...draft, locale, theme })
   snapshot.project.id = id
+  snapshot.metadata = { ...snapshot.metadata, origin: draft.templateKey ? 'template' : 'manual', planningMode: draft.planningMode, templateKey: draft.templateKey }
   const now = new Date().toISOString()
   return { id, title: draft.title, description: draft.description, startDate: draft.startDate, endDate: draft.endDate, planningMode: draft.planningMode, templateKey: draft.templateKey, categories: snapshot.project.categoryDefinitions?.map((category) => category.key) ?? [], monthlyViewPreference: 'list', snapshot, createdAt: now, updatedAt: now }
 }
@@ -228,12 +223,9 @@ export const useForgePlannerStore = create<ForgePlannerStore>()(
           plans: withUpdatedPlan(state.plans, planId, (plan) => {
             const startDate = updates.startDate ?? plan.startDate
             const endDate = updates.endDate ?? plan.endDate
-            const selectedYear = Number(startDate.slice(0, 4))
-            const selectedMonthId = getClosestActiveMonth(selectedYear, startDate, endDate)
-            const snapshot: PersistedRoadmapState = {
+            const snapshot: CanonicalPlan = {
               ...plan.snapshot,
-              selectedYear,
-              selectedMonthId,
+              metadata: { ...plan.snapshot.metadata, planningMode: updates.planningMode ?? plan.snapshot.metadata.planningMode, templateKey: updates.templateKey ?? plan.snapshot.metadata.templateKey },
               project: {
                 ...plan.snapshot.project,
                 name: updates.title ?? plan.title,
@@ -243,7 +235,6 @@ export const useForgePlannerStore = create<ForgePlannerStore>()(
                 endDate,
                 plannedEndDate: plan.snapshot.project.plannedEndDate ?? plan.snapshot.project.endDate,
                 actualEndDate: endDate,
-                selectedYear,
                 savingsPlan: {
                   ...plan.snapshot.project.savingsPlan,
                   enabled: updates.savingsEnabled ?? plan.snapshot.project.savingsPlan.enabled ?? false,

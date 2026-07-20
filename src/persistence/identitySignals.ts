@@ -5,7 +5,7 @@ export type IdentitySignal = 'session-changed'
 
 export function publishIdentitySignal(signal: IdentitySignal) {
   if (typeof window === 'undefined') return
-  if ('BroadcastChannel' in window) {
+  if (typeof BroadcastChannel !== 'undefined') {
     const channel = new BroadcastChannel(CHANNEL_NAME)
     channel.postMessage(signal)
     channel.close()
@@ -16,7 +16,7 @@ export function publishIdentitySignal(signal: IdentitySignal) {
 
 export function subscribeToIdentitySignals(listener: (signal: IdentitySignal) => void) {
   if (typeof window === 'undefined') return () => undefined
-  if ('BroadcastChannel' in window) {
+  if (typeof BroadcastChannel !== 'undefined') {
     const channel = new BroadcastChannel(CHANNEL_NAME)
     channel.onmessage = (event: MessageEvent<IdentitySignal>) => {
       if (event.data === 'session-changed') listener(event.data)

@@ -11,5 +11,5 @@
     "rootDir": ".",
     "noEmit": false
   },
-  "include": ["server", "prisma/seed.ts"]
+  "include": ["server", "shared", "prisma/seed.ts"]
 }

@@ -1,4 +1,4 @@
-import type { PersistedRoadmapState } from '../utils/roadmapState'
+import type { CanonicalPlan } from '../../shared/plan-contract/index.js'
 
 export type PlanTemplateKey =
   | 'blank'
@@ -26,7 +26,7 @@ export interface ForgePlan {
   templateKey?: PlanTemplateKey
   categories: string[]
   monthlyViewPreference: MonthlyViewPreference
-  snapshot: PersistedRoadmapState
+  snapshot: CanonicalPlan
   createdAt: string
   updatedAt: string
 }

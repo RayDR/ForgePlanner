@@ -8,7 +8,7 @@ let store: typeof import('./useForgePlannerStore').useForgePlannerStore
 let reset: typeof import('./useForgePlannerStore').resetForgePlannerMemory
 let transition: typeof import('../persistence/identityTransition').transitionBrowserIdentity
 
-const plan = (id: string, remoteId?: string): ForgePlan => ({ id, remoteId, remoteAccess: remoteId ? 'owner' : undefined, remoteRevision: remoteId ? 1 : undefined, title: id, description: '', startDate: '2026-01-01', endDate: '2026-12-31', planningMode: 'annual', categories: [], monthlyViewPreference: 'list', snapshot: { schemaVersion: 7, project: { id } } as ForgePlan['snapshot'], createdAt: '', updatedAt: '' })
+const plan = (id: string, remoteId?: string): ForgePlan => ({ id, remoteId, remoteAccess: remoteId ? 'owner' : undefined, remoteRevision: remoteId ? 1 : undefined, title: id, description: '', startDate: '2026-01-01', endDate: '2026-12-31', planningMode: 'annual', categories: [], monthlyViewPreference: 'list', snapshot: { schemaVersion: 7, project: { id } } as unknown as ForgePlan['snapshot'], createdAt: '', updatedAt: '' })
 
 describe('authenticated plan cache and outbox', () => {
   beforeAll(async () => {

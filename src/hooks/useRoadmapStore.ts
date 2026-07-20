@@ -22,6 +22,8 @@ import type {
 import { getClosestActiveMonth, normalizeDateRange } from '../utils/dateUtils'
 import { resolveMonthForYear } from '../utils/monthSelection'
 import { createIdentityScopedStorage } from '../persistence/scopedStorage'
+import type { CanonicalPlan, PlanMetadata } from '../../shared/plan-contract/index.js'
+import { CURRENT_PLAN_SCHEMA_VERSION, PLANNER_CONTRACT_VERSION, activitySchema, parseCanonicalPlan, parsePlanDocument, safeValidateCanonicalPlan } from '../../shared/plan-contract/index.js'
 import { contractProjectTimelineAfterRemoval, inferPlannedStartDate } from '../utils/projectTimeline'
 import {
   type MigrationIssue,
@@ -50,6 +52,7 @@ import {
 
 interface RoadmapState {
   schemaVersion: number
+  metadata: PlanMetadata
   project: Project
   activities: Activity[]
   trash: ActivityTrashItem[]
@@ -107,25 +110,26 @@ interface RoadmapState {
   purgeExpiredTrash: () => void
   updateSavingsEntry: (monthId: string, target: number, actual: number, notes?: string) => void
   exportStateAsJson: () => string
-  exportSnapshot: () => PersistedRoadmapState
-  loadSnapshot: (snapshot: PersistedRoadmapState) => void
+  exportSnapshot: () => CanonicalPlan
+  loadSnapshot: (snapshot: CanonicalPlan) => void
   importStateFromJson: (jsonText: string) => { ok: true } | { ok: false; error: string }
   exportActivitiesAsExcelCsv: () => string
   importActivitiesFromExcelCsv: (csvText: string) => { ok: true } | { ok: false; error: string }
 }
 
-const STORE_VERSION = 7
+const STORE_VERSION = 8
 
 function createDefaultPersistedState(): PersistedRoadmapState {
   return {
     schemaVersion: STORE_VERSION,
+    metadata: { origin: 'manual', planningMode: 'auto', contentLanguage: 'mixed', plannerContractVersion: PLANNER_CONTRACT_VERSION },
     project: northstarProject,
     activities: northstarActivities,
     trash: [],
     relationships: northstarRelationships,
-    selectedYear: northstarProject.selectedYear,
+    selectedYear: Number(northstarProject.startDate.slice(0, 4)),
     selectedMonthId: getClosestActiveMonth(
-      northstarProject.selectedYear,
+      Number(northstarProject.startDate.slice(0, 4)),
       northstarProject.startDate,
       northstarProject.endDate,
     ),
@@ -139,9 +143,20 @@ function nextTrashExpiryIso() {
 }
 
 function normalizeStatusDefinitions(statusDefinitions: ActivityStatusDefinition[]) {
-  return [...statusDefinitions]
+  const sorted = [...statusDefinitions]
     .sort((left, right) => left.order - right.order)
-    .map((status, index) => ({ ...status, order: index }))
+  const explicitDefaults = sorted.filter((status) => status.isDefault)
+  const defaultId = explicitDefaults.length === 1
+    ? explicitDefaults[0].id
+    : sorted.find((status) => status.id === 'planned')?.id ?? sorted[0]?.id
+  return sorted.map((status, index) => ({
+    id: status.id,
+    label: status.label,
+    colorKey: status.colorKey,
+    ...(status.isSystem ? { isSystem: true } : {}),
+    order: index,
+    ...(status.id === defaultId ? { isDefault: true } : {}),
+  }))
 }
 
 function defaultColorByCategory(category: string): ActivityColorKey {
@@ -235,6 +250,7 @@ function upgradePersistedState(candidate: PersistedRoadmapState): PersistedRoadm
   return {
     ...candidate,
     schemaVersion: STORE_VERSION,
+    metadata: candidate.metadata ?? { origin: 'manual', contentLanguage: candidate.locale ?? 'mixed', plannerContractVersion: PLANNER_CONTRACT_VERSION },
     trash: candidate.trash ?? [],
     project: upgradedProject,
     activities: upgradedActivities,
@@ -289,14 +305,8 @@ function getNextMonthId(monthId: string) {
 }
 
 function resolveImportedState(parsed: unknown): PersistedRoadmapState | null {
-  if (isValidNewPersistedState(parsed)) {
-    return upgradePersistedState(parsed)
-  }
-
-  if (isValidLegacyPersistedState(parsed)) {
-    return migrateLegacyPersistedState(parsed, STORE_VERSION)
-  }
-
+  const contract = parsePlanDocument(parsed)
+  if (contract.success) return { ...contract.plan, selectedYear: contract.extractedUiState?.selectedYear ?? Number(contract.plan.project.startDate.slice(0, 4)), selectedMonthId: contract.extractedUiState?.selectedMonthId ?? getClosestActiveMonth(Number(contract.plan.project.startDate.slice(0, 4)), contract.plan.project.startDate, contract.plan.project.endDate), locale: contract.extractedUiState?.locale ?? 'es', theme: contract.extractedUiState?.theme ?? 'light' }
   return null
 }
 
@@ -536,7 +546,7 @@ export const useRoadmapStore = create<RoadmapState>()(
           sequenceGroupId: draft.sequenceGroupId,
           milestone: draft.milestone,
           colorKey: get().project.categoryDefinitions?.find((category) => category.key === draft.category)?.tone ?? defaultColorByCategory(draft.category),
-          statusId: draft.initialStatus === 'completed' ? 'done' : draft.initialStatus === 'cancelled' ? 'blocked' : draft.initialStatus === 'paused' ? 'paused' : draft.initialStatus === 'in-progress' ? 'in-progress' : 'planned',
+          statusId: draft.initialStatus === 'completed' ? 'done' : draft.initialStatus === 'cancelled' ? 'blocked' : draft.initialStatus === 'paused' ? 'paused' : draft.initialStatus === 'in-progress' ? 'in-progress' : get().project.statusDefinitions.find((status) => status.isDefault)?.id ?? 'planned',
           budgetImpact: draft.budgetImpact,
           savingsImpact: draft.savingsImpact,
           history: [
@@ -1006,34 +1016,18 @@ export const useRoadmapStore = create<RoadmapState>()(
         })
       },
       exportStateAsJson: () => {
-        const state = get()
-        const payload: PersistedRoadmapState = {
-          schemaVersion: STORE_VERSION,
-          project: state.project,
-          activities: state.activities,
-          trash: state.trash,
-          relationships: state.relationships,
-          selectedYear: state.selectedYear,
-          selectedMonthId: state.selectedMonthId,
-          locale: state.locale,
-          theme: state.theme,
-        }
-
-        return JSON.stringify(payload, null, 2)
+        return JSON.stringify(get().exportSnapshot(), null, 2)
       },
       exportSnapshot: () => {
         const state = get()
-        return {
-          schemaVersion: STORE_VERSION,
+        return parseCanonicalPlan({
+          schemaVersion: CURRENT_PLAN_SCHEMA_VERSION,
+          metadata: state.metadata,
           project: state.project,
           activities: state.activities,
           trash: state.trash,
           relationships: state.relationships,
-          selectedYear: state.selectedYear,
-          selectedMonthId: state.selectedMonthId,
-          locale: state.locale,
-          theme: state.theme,
-        }
+        })
       },
       loadSnapshot: (snapshot) => {
         const candidate = resolveImportedState(snapshot)
@@ -1051,11 +1045,9 @@ export const useRoadmapStore = create<RoadmapState>()(
       importStateFromJson: (jsonText) => {
         try {
           const parsed = JSON.parse(jsonText) as unknown
-          const candidate = resolveImportedState(parsed)
-
-          if (!candidate) {
-            return { ok: false as const, error: 'Invalid JSON schema for NorthStar planner import.' }
-          }
+          const result = parsePlanDocument(parsed)
+          if (!result.success) return { ok: false as const, error: `${result.issues[0]?.code ?? 'INVALID_PLAN'}: ${result.issues[0]?.message ?? 'Invalid JSON schema for NorthStar planner import.'}` }
+          const candidate: PersistedRoadmapState = { ...result.plan, selectedYear: result.extractedUiState?.selectedYear ?? Number(result.plan.project.startDate.slice(0, 4)), selectedMonthId: result.extractedUiState?.selectedMonthId ?? getClosestActiveMonth(Number(result.plan.project.startDate.slice(0, 4)), result.plan.project.startDate, result.plan.project.endDate), locale: result.extractedUiState?.locale ?? get().locale, theme: result.extractedUiState?.theme ?? get().theme }
 
           set({
             ...candidate,
@@ -1143,7 +1135,7 @@ export const useRoadmapStore = create<RoadmapState>()(
           }
 
           const indexByHeader = Object.fromEntries(headers.map((header, index) => [header, index])) as Record<string, number>
-          const activities: Activity[] = lines.slice(1).map((line) => {
+          const activities: Activity[] = lines.slice(1).map((line, rowIndex) => {
             const cells = parseCsvLine(line)
             const read = (header: string) => cells[indexByHeader[header]] ?? ''
             const toList = (value: string) => value.split('|').map((item) => item.trim()).filter(Boolean)
@@ -1163,7 +1155,7 @@ export const useRoadmapStore = create<RoadmapState>()(
                 }
               : {}
 
-            return {
+            const candidate = {
               id: read('id'),
               title: read('title'),
               description: read('description'),
@@ -1192,9 +1184,15 @@ export const useRoadmapStore = create<RoadmapState>()(
               history: read('history') ? (JSON.parse(read('history')) as Activity['history']) : [],
               monthlyEntries,
             }
+            const parsedActivity = activitySchema.safeParse(candidate)
+            if (!parsedActivity.success) throw new Error(`Invalid activity CSV row ${rowIndex + 2}: ${parsedActivity.error.issues[0]?.message ?? 'invalid activity'}`)
+            return parsedActivity.data
           })
 
           const relationships = deriveRelationshipsFromActivities(activities)
+          const candidatePlan = { ...get().exportSnapshot(), activities, trash: [], relationships }
+          const validatedPlan = safeValidateCanonicalPlan(candidatePlan)
+          if (!validatedPlan.success) return { ok: false as const, error: `CSV activities violate the plan contract: ${validatedPlan.issues[0]?.code ?? 'INVALID_ACTIVITY'}.` }
           const firstMonthId =
             Object.keys(activities[0]?.monthlyEntries ?? {}).sort((left, right) => left.localeCompare(right))[0] ??
             get().selectedMonthId
@@ -1210,8 +1208,8 @@ export const useRoadmapStore = create<RoadmapState>()(
           })
 
           return { ok: true as const }
-        } catch {
-          return { ok: false as const, error: 'Could not parse Excel CSV. Use the exported template format.' }
+        } catch (reason) {
+          return { ok: false as const, error: reason instanceof Error ? reason.message : 'Could not parse Excel CSV. Use the exported template format.' }
         }
       },
     }),
@@ -1244,6 +1242,7 @@ export const useRoadmapStore = create<RoadmapState>()(
       skipHydration: true,
       partialize: (state) => ({
         schemaVersion: state.schemaVersion,
+        metadata: state.metadata,
         project: state.project,
         activities: state.activities,
         trash: state.trash,

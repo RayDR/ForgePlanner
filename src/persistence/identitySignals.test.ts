@@ -5,7 +5,9 @@ import { MemoryStorage } from './testStorage'
 class FakeBroadcastChannel {
   static channels = new Map<string, Set<FakeBroadcastChannel>>()
   onmessage: ((event: MessageEvent<'session-changed'>) => void) | null = null
-  constructor(private readonly name: string) {
+  private readonly name: string
+  constructor(name: string) {
+    this.name = name
     const channels = FakeBroadcastChannel.channels.get(name) ?? new Set()
     channels.add(this); FakeBroadcastChannel.channels.set(name, channels)
   }

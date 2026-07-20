@@ -59,10 +59,10 @@ function makeProject(overrides: Partial<Project> = {}): Project {
     endDate: '2027-12-31',
     plannedEndDate: '2027-12-31',
     actualEndDate: '2027-12-31',
-    selectedYear: 2026,
     goals: [],
     milestones: [],
     statusDefinitions: DEFAULT_PROJECT_STATUSES,
+    categoryDefinitions: [{ key: 'career', label: 'Career', tone: 'slate', isDefault: true }],
     savingsPlan: {
       currency: 'USD',
       targetTotal: 600,
@@ -227,6 +227,7 @@ describe('roadmap monthly model', () => {
   it('validates export/import payload in the new schema', () => {
     const snapshot: PersistedRoadmapState = {
       schemaVersion: 5,
+      metadata: { origin: 'manual', contentLanguage: 'es', plannerContractVersion: 'northstar-plan/8' },
       project: makeProject(),
       activities: [makeActivity()],
       trash: [],

@@ -1,10 +1,13 @@
 import type { ForgePlan } from '../types/forgePlanner'
 import { notifySessionInvalid } from '../auth/sessionInvalidation'
+import { parsePlanDocument } from '../../shared/plan-contract/index.js'
 
-export interface RemotePlan { id: string; importKey?: string | null; accessLevel?: 'owner' | 'editor' | 'viewer'; sharingEnabled: boolean; name: string; objective: string | null; startDate: string; endDate: string; status: string; snapshot: Record<string, unknown>; revision: number; createdAt: string; updatedAt: string }
+export interface RemotePlan { id: string; importKey?: string | null; accessLevel?: 'owner' | 'editor' | 'viewer'; sharingEnabled: boolean; name: string; objective: string | null; startDate: string; endDate: string; status: string; snapshot: unknown; revision: number; createdAt: string; updatedAt: string }
 
 export class PlanRequestError extends Error {
-  constructor(public status: number, public code: string, message: string) { super(message); this.name = 'PlanRequestError' }
+  status: number
+  code: string
+  constructor(status: number, code: string, message: string) { super(message); this.name = 'PlanRequestError'; this.status = status; this.code = code }
 }
 
 export class PlanConflictError extends Error {
@@ -40,14 +43,14 @@ async function request<T>(path: string, init: RequestInit = {}) {
 }
 
 function payload(plan: ForgePlan) {
-  return { name: plan.title, objective: plan.description, startDate: plan.startDate, endDate: plan.endDate, status: 'active', snapshot: { ...plan.snapshot, _forge: { planningMode: plan.planningMode, templateKey: plan.templateKey, categories: plan.categories, monthlyViewPreference: plan.monthlyViewPreference } } }
+  return { status: 'active', snapshot: plan.snapshot }
 }
 
 function fromRemote(remote: RemotePlan, remoteLinkId?: string): ForgePlan {
-  const metadata = remote.snapshot._forge as Partial<ForgePlan> | undefined
-  const { _forge: _ignored, ...snapshot } = remote.snapshot
-  void _ignored
-  return { id: remote.importKey ?? remote.id, remoteId: remote.id, remoteAccess: remote.accessLevel ?? 'owner', remoteRevision: remote.revision, remoteSharingEnabled: remote.sharingEnabled, remoteLinkId, title: remote.name, description: remote.objective ?? '', startDate: remote.startDate, endDate: remote.endDate, planningMode: metadata?.planningMode ?? 'auto', templateKey: metadata?.templateKey, categories: metadata?.categories ?? [], monthlyViewPreference: metadata?.monthlyViewPreference ?? 'list', snapshot: snapshot as unknown as ForgePlan['snapshot'], createdAt: remote.createdAt, updatedAt: remote.updatedAt }
+  const result = parsePlanDocument(remote.snapshot)
+  if (!result.success) throw new PlanRequestError(500, 'CORRUPTED_PLAN_SNAPSHOT', 'The stored plan failed contract validation.')
+  const snapshot = result.plan
+  return { id: remote.importKey ?? remote.id, remoteId: remote.id, remoteAccess: remote.accessLevel ?? 'owner', remoteRevision: remote.revision, remoteSharingEnabled: remote.sharingEnabled, remoteLinkId, title: snapshot.project.name, description: snapshot.project.objective, startDate: snapshot.project.startDate, endDate: snapshot.project.endDate, planningMode: snapshot.metadata.planningMode ?? 'auto', templateKey: snapshot.metadata.templateKey, categories: snapshot.project.categoryDefinitions.map((item) => item.key), monthlyViewPreference: result.extractedUiState?.monthlyViewPreference ?? 'list', snapshot, createdAt: remote.createdAt, updatedAt: remote.updatedAt }
 }
 
 export const planApi = {

@@ -21,6 +21,7 @@ import { PlanSharingDialog } from '../plans/PlanSharingDialog'
 import { sharingApi } from '../plans/sharingApi'
 import { planApi, PlanRequestError } from '../plans/planApi'
 import { getIdentityScope, getScopeGeneration, isCurrentScope } from '../persistence/identityScope'
+import { parsePlanDocument } from '../../shared/plan-contract/index.js'
 import {
   ArchiveIcon,
   CopyIcon,
@@ -99,10 +100,10 @@ function defaultDraft(locale: Locale): PlanDraft {
   }
 }
 
-function buildPlanPreview(plan: ForgePlan): PlanPreviewYear[] {
+function buildPlanPreview(plan: ForgePlan, locale: Locale): PlanPreviewYear[] {
   const years = getProjectYears(plan.startDate, plan.endDate)
   return years.map((year) => {
-    const yearMonths = buildYearMonths(year, plan.startDate, plan.endDate, plan.snapshot.locale)
+    const yearMonths = buildYearMonths(year, plan.startDate, plan.endDate, locale)
     const months = yearMonths.map((month) => {
       const monthActivities = activitiesForMonth(plan.snapshot.activities, month.id)
       const progress = getAverageProgress(plan.snapshot.activities, month.id)
@@ -293,10 +294,10 @@ export function PlansHomeView() {
   const previewByPlan = useMemo(() => {
     const next = new Map<string, PlanPreviewYear[]>()
     for (const plan of activePlans) {
-      next.set(plan.id, buildPlanPreview(plan))
+      next.set(plan.id, buildPlanPreview(plan, locale))
     }
     return next
-  }, [activePlans])
+  }, [activePlans, locale])
 
   function openSelectedPlan(plan: ForgePlan) {
     openPlan(plan.id)
@@ -316,7 +317,8 @@ export function PlansHomeView() {
 
   function handleExportPlan(plan: ForgePlan) {
     const safeName = plan.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') || 'plan'
-    downloadJson(`${safeName}.json`, plan.snapshot)
+    const canonical = parsePlanDocument(plan.snapshot)
+    if (canonical.success) downloadJson(`${safeName}.json`, canonical.plan)
   }
 
   function failedSyncMetadata(reason: unknown, clientMutationId: string) {

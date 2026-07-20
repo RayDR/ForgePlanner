@@ -12,6 +12,7 @@ import type {
   RelationshipMode,
 } from '../types/roadmap'
 import { getMonthIdsBetween } from './dateUtils'
+import type { PlanMetadata } from '../../shared/plan-contract/index.js'
 import {
   computeSavingsPlanTargetTotal,
   createMonthlyEntry,
@@ -36,6 +37,7 @@ export interface MigrationIssue {
 
 export interface PersistedRoadmapState {
   schemaVersion: number
+  metadata: PlanMetadata
   project: Project
   activities: Activity[]
   trash: ActivityTrashItem[]
@@ -51,11 +53,11 @@ type LegacyActivityStatus = 'not-started' | 'in-progress' | 'blocked' | 'complet
 export const ACTIVITY_COLOR_KEYS: ActivityColorKey[] = ['slate', 'blue', 'green', 'amber', 'rose']
 
 export const DEFAULT_PROJECT_STATUSES: ActivityStatusDefinition[] = [
-  { id: 'planned', label: 'Planned', colorKey: 'slate', order: 0, isDefault: true },
-  { id: 'in-progress', label: 'In Progress', colorKey: 'blue', order: 1, isDefault: true },
-  { id: 'paused', label: 'Paused', colorKey: 'amber', order: 2, isDefault: true },
-  { id: 'blocked', label: 'Blocked', colorKey: 'rose', order: 3, isDefault: true },
-  { id: 'done', label: 'Done', colorKey: 'green', order: 4, isDefault: true },
+  { id: 'planned', label: 'Planned', colorKey: 'slate', order: 0, isSystem: true, isDefault: true },
+  { id: 'in-progress', label: 'In Progress', colorKey: 'blue', order: 1, isSystem: true },
+  { id: 'paused', label: 'Paused', colorKey: 'amber', order: 2, isSystem: true },
+  { id: 'blocked', label: 'Blocked', colorKey: 'rose', order: 3, isSystem: true },
+  { id: 'done', label: 'Done', colorKey: 'green', order: 4, isSystem: true },
 ]
 
 interface LegacyMonthlyPlan {
@@ -335,9 +337,17 @@ export function migrateLegacyPersistedState(
 
   return {
     schemaVersion,
+    metadata: { origin: 'import', contentLanguage: candidate.locale ?? 'mixed', plannerContractVersion: 'northstar-plan/8' },
     project: {
-      ...candidate.project,
+      id: candidate.project.id,
+      name: candidate.project.name,
+      objective: candidate.project.objective,
+      startDate: candidate.project.startDate,
+      endDate: candidate.project.endDate,
+      goals: candidate.project.goals,
+      milestones: candidate.project.milestones,
       statusDefinitions: DEFAULT_PROJECT_STATUSES,
+      categoryDefinitions: [...new Map(candidate.activities.map((activity) => [activity.category, { key: activity.category, label: activity.category, tone: mapCategoryToColor(activity.category) }])).values()].map((category, index) => ({ ...category, isDefault: index === 0 || undefined })),
       plannedEndDate: candidate.project.plannedEndDate ?? candidate.project.endDate,
       actualEndDate: candidate.project.actualEndDate ?? candidate.project.endDate,
       savingsPlan: {

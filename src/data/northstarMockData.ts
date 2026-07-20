@@ -21,7 +21,7 @@ export const categoryMeta: Record<CategoryMeta['key'], CategoryMeta> = {
   backend: { key: 'backend', label: 'Backend', tone: 'slate' },
   portfolio: { key: 'portfolio', label: 'Portfolio', tone: 'green' },
   certifications: { key: 'certifications', label: 'Certifications', tone: 'amber' },
-  career: { key: 'career', label: 'Career', tone: 'slate' },
+  career: { key: 'career', label: 'Career', tone: 'slate', isDefault: true },
   'family-lifestyle': { key: 'family-lifestyle', label: 'Family / Lifestyle', tone: 'green' },
   health: { key: 'health', label: 'Health', tone: 'green' },
   admin: { key: 'admin', label: 'Admin', tone: 'slate' },
@@ -50,11 +50,11 @@ export const statusMeta: Record<MonthlyActivityStatus, string> = {
 }
 
 export const defaultProjectStatuses: ActivityStatusDefinition[] = [
-  { id: 'planned', label: 'Planned', colorKey: 'slate', order: 0, isDefault: true },
-  { id: 'in-progress', label: 'In Progress', colorKey: 'blue', order: 1, isDefault: true },
-  { id: 'paused', label: 'Paused', colorKey: 'amber', order: 2, isDefault: true },
-  { id: 'blocked', label: 'Blocked', colorKey: 'rose', order: 3, isDefault: true },
-  { id: 'done', label: 'Done', colorKey: 'green', order: 4, isDefault: true },
+  { id: 'planned', label: 'Planned', colorKey: 'slate', order: 0, isSystem: true, isDefault: true },
+  { id: 'in-progress', label: 'In Progress', colorKey: 'blue', order: 1, isSystem: true },
+  { id: 'paused', label: 'Paused', colorKey: 'amber', order: 2, isSystem: true },
+  { id: 'blocked', label: 'Blocked', colorKey: 'rose', order: 3, isSystem: true },
+  { id: 'done', label: 'Done', colorKey: 'green', order: 4, isSystem: true },
 ]
 
 const colorByCategory: Record<Activity['category'], ActivityColorKey> = {
@@ -195,7 +195,6 @@ export const northstarProject: Project = {
   endDate: '2028-07-31',
   plannedEndDate: '2028-07-31',
   actualEndDate: '2028-07-31',
-  selectedYear: 2027,
   goals: [
     {
       id: 'goal-express-entry',
