@@ -14,4 +14,4 @@ fi
 node -e 'const url = new URL(process.env.TEST_DATABASE_URL); const database = url.pathname.slice(1); if (!/(^|[_-])test([_-]|$)/i.test(database) && !/^test_/i.test(url.searchParams.get("schema") ?? "")) { console.error("The integration database or schema name must be explicitly marked as test."); process.exit(2) }'
 
 DATABASE_URL="${TEST_DATABASE_URL}" npx prisma migrate deploy
-TEST_DATABASE_URL="${TEST_DATABASE_URL}" npx vitest run server/modules/plans/plan.integration.test.ts
+TEST_DATABASE_URL="${TEST_DATABASE_URL}" npx vitest run --no-file-parallelism server/modules/plans/plan.integration.test.ts server/modules/plans/plan-version.integration.test.ts

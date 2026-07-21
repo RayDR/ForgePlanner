@@ -27,6 +27,19 @@ enum PlanAccessStatus {
   revoked
 }
 
+enum PlanVersionSource {
+  USER
+  IMPORT
+  MIGRATION
+  SYSTEM
+  TRASH_DELETE
+  TRASH_RESTORE
+  VERSION_RESTORE
+  AI_GENERATION
+  AI_REFINEMENT
+  AI_PATCH
+}
+
 model User {
   id                      String                    @id @default(uuid()) @db.Uuid
   email                   String                    @unique @db.VarChar(320)
@@ -54,6 +67,8 @@ model User {
   grantedPlanAccess       PlanAccess[]              @relation("PlanAccessGrantor")
   actorAuditLogs          AuditLog[]                @relation("AuditActor")
   effectiveAuditLogs      AuditLog[]                @relation("AuditEffective")
+  actorPlanVersions       PlanVersion[]             @relation("PlanVersionActor")
+  effectivePlanVersions   PlanVersion[]             @relation("PlanVersionEffective")
   impersonationsStarted   ImpersonationSession[]    @relation("ImpersonationAdmin")
   impersonationsReceived  ImpersonationSession[]    @relation("ImpersonationTarget")
   externalIdentities      ExternalIdentity[]
@@ -306,11 +321,41 @@ model Plan {
   deletedBy        User?          @relation("PlanDeletedBy", fields: [deletedByUserId], references: [id], onDelete: SetNull)
   access           PlanAccess[]
   shareLink        PlanShareLink?
+  versions         PlanVersion[]
 
   @@unique([ownerUserId, importKey])
   @@unique([ownerUserId, clientMutationId])
+  @@unique([id, revision])
   @@index([ownerUserId, deletedAt, updatedAt])
   @@index([purgeAfter, id])
+}
+
+model PlanVersion {
+  id                    String            @id @default(uuid()) @db.Uuid
+  planId                String            @map("plan_id") @db.Uuid
+  revision              Int
+  schemaVersion         Int               @map("schema_version")
+  snapshot              Json
+  source                PlanVersionSource
+  actorUserId           String?           @map("actor_user_id") @db.Uuid
+  effectiveUserId       String?           @map("effective_user_id") @db.Uuid
+  parentVersionId       String?           @map("parent_version_id") @db.Uuid
+  restoredFromVersionId String?           @map("restored_from_version_id") @db.Uuid
+  checksum              String            @db.Char(64)
+  snapshotSizeBytes     Int               @map("snapshot_size_bytes")
+  createdAt             DateTime          @default(now()) @map("created_at")
+  plan                  Plan              @relation(fields: [planId], references: [id], onDelete: Cascade)
+  actorUser             User?             @relation("PlanVersionActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+  effectiveUser         User?             @relation("PlanVersionEffective", fields: [effectiveUserId], references: [id], onDelete: SetNull)
+  parentVersion         PlanVersion?      @relation("PlanVersionParent", fields: [parentVersionId], references: [id], onDelete: SetNull)
+  childVersions         PlanVersion[]     @relation("PlanVersionParent")
+  restoredFromVersion   PlanVersion?      @relation("PlanVersionRestore", fields: [restoredFromVersionId], references: [id], onDelete: SetNull)
+  restoredVersions      PlanVersion[]     @relation("PlanVersionRestore")
+
+  @@unique([planId, revision])
+  @@index([planId, revision(sort: Desc)])
+  @@index([planId, createdAt(sort: Desc)])
+  @@index([planId, source])
 }
 
 model PlanShareLink {

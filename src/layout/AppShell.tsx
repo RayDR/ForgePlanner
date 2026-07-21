@@ -14,6 +14,8 @@ import { resolveInitialMonthForYear } from '../utils/monthSelection'
 import { CalendarIcon, ListIcon, MoreVerticalIcon, PencilIcon } from '../ui/icons'
 import { useSession } from '../auth/SessionProvider'
 import { HeaderActions } from './HeaderActions'
+import { PlanVersionHistory } from '../plans/PlanVersionHistory'
+import { getIdentityScope } from '../persistence/identityScope'
 
 const views = [
   { to: '/roadmap', label: 'Annual roadmap' },
@@ -27,6 +29,7 @@ export function AppShell() {
   const [showDataMenu, setShowDataMenu] = useState(false)
   const [showSavingsBreakdown, setShowSavingsBreakdown] = useState(false)
   const [showDateEditor, setShowDateEditor] = useState(false)
+  const [showVersionHistory, setShowVersionHistory] = useState(false)
   const [dateDraft, setDateDraft] = useState({ startDate: '', endDate: '' })
   const dataMenuRef = useRef<HTMLDivElement | null>(null)
   const project = useRoadmapStore((state) => state.project)
@@ -252,6 +255,7 @@ export function AppShell() {
                   {!readOnly ? <button onClick={() => importInputRef.current?.click()}>{t.importJson}</button> : null}
                   <button onClick={handleExportExcel}>{t.exportExcel}</button>
                   {!readOnly ? <button onClick={() => importExcelInputRef.current?.click()}>{t.importExcel}</button> : null}
+                  {activePlan?.remoteId ? <button onClick={() => { setShowVersionHistory(true); setShowDataMenu(false) }}>{t.versionHistory}</button> : null}
                 </div>
               ) : null}
             </div>
@@ -353,6 +357,8 @@ export function AppShell() {
           </div>
         </div>
       ) : null}
+
+      {showVersionHistory && activePlan?.remoteId ? <PlanVersionHistory key={`${getIdentityScope() ?? 'unknown'}:${activePlan.remoteId}`} plan={activePlan} locale={locale} onClose={() => setShowVersionHistory(false)} /> : null}
 
       <ActivityModal />
     </div>

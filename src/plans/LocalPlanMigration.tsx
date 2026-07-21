@@ -20,7 +20,7 @@ export function LocalPlanMigration() {
   const [dismissed, setDismissed] = useState(false); const [working, setWorking] = useState(false); const [error, setError] = useState('')
   const [conflicts, setConflicts] = useState<Record<string, { local: ForgePlan; remote: ForgePlan }>>({})
   const [guestPlans, setGuestPlans] = useState<ForgePlan[]>(readGuestPlanCandidates)
-  const loaded = useRef(false); const savedFingerprints = useRef(new Map<string, string>()); const saving = useRef(new Set<string>())
+  const loaded = useRef(false); const savedFingerprints = useRef(new Map<string, string>()); const savedRevisions = useRef(new Map<string, number>()); const saving = useRef(new Set<string>())
   const accountPending = useMemo(() => plans.filter((plan) => !plan.remoteId && (syncByPlanId[plan.id]?.state ?? 'local') === 'local'), [plans, syncByPlanId])
   const pending = useMemo(() => [...accountPending, ...guestPlans.filter((guest) => !accountPending.some((plan) => plan.id === guest.id))], [accountPending, guestPlans])
 
@@ -29,7 +29,7 @@ export function LocalPlanMigration() {
     const scope = getIdentityScope(); const generation = getScopeGeneration()
     void planApi.list(controller.signal).then((remote) => {
       if (!scope || !isCurrentScope(scope, generation)) return
-      remote.forEach((plan) => savedFingerprints.current.set(plan.id, fingerprint(plan)))
+      remote.forEach((plan) => { savedFingerprints.current.set(plan.id, fingerprint(plan)); if (plan.remoteRevision) savedRevisions.current.set(plan.id, plan.remoteRevision) })
       reconcileRemotePlans(remote); loaded.current = true
     }).catch((reason) => {
       if (controller.signal.aborted || !scope || !isCurrentScope(scope, generation)) return
@@ -44,14 +44,21 @@ export function LocalPlanMigration() {
     const timer = window.setTimeout(() => plans.filter((plan) => plan.remoteId && plan.remoteAccess !== 'viewer' && syncByPlanId[plan.id]?.state !== 'deleting' && !conflicts[plan.id]).forEach((plan) => {
       if (!scope || !isCurrentScope(scope, generation)) return
       const currentFingerprint = fingerprint(plan)
+      const acceptedRevision = savedRevisions.current.get(plan.id)
+      if (plan.remoteRevision && acceptedRevision && plan.remoteRevision !== acceptedRevision && syncByPlanId[plan.id]?.state === 'synced') {
+        savedFingerprints.current.set(plan.id, currentFingerprint)
+        savedRevisions.current.set(plan.id, plan.remoteRevision)
+        return
+      }
       if (!savedFingerprints.current.has(plan.id)) {
         savedFingerprints.current.set(plan.id, currentFingerprint)
+        if (plan.remoteRevision) savedRevisions.current.set(plan.id, plan.remoteRevision)
         return
       }
       if (savedFingerprints.current.get(plan.id) === currentFingerprint || saving.current.has(plan.id)) return
       saving.current.add(plan.id); savedFingerprints.current.set(plan.id, currentFingerprint)
       setPlanSync(plan.id, { state: 'saving' })
-      void planApi.update(plan, plan.remoteRevision ?? 1, controller.signal).then((remote) => { if (isCurrentScope(scope, generation)) replaceRemotePlan(remote) }).catch(async (reason) => {
+      void planApi.update(plan, plan.remoteRevision ?? 1, controller.signal).then((remote) => { if (isCurrentScope(scope, generation)) { if (remote.remoteRevision) savedRevisions.current.set(plan.id, remote.remoteRevision); replaceRemotePlan(remote) } }).catch(async (reason) => {
         if (controller.signal.aborted) return
         if (!isCurrentScope(scope, generation)) return
         if (reason instanceof PlanConflictError) {

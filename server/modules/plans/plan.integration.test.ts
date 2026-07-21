@@ -35,7 +35,7 @@ integration('PostgreSQL plan authority', () => {
   beforeAll(async () => { await db.$connect() })
   afterAll(async () => { await db.$disconnect() })
   beforeEach(async () => {
-    await db.auditLog.deleteMany(); await db.planAccess.deleteMany(); await db.planShareLink.deleteMany(); await db.plan.deleteMany(); await db.session.deleteMany(); await db.userRole.deleteMany(); await db.rolePermission.deleteMany(); await db.permission.deleteMany(); await db.role.deleteMany(); await db.user.deleteMany()
+    await db.auditLog.deleteMany(); await db.planAccess.deleteMany(); await db.planShareLink.deleteMany(); await db.plan.deleteMany(); await db.session.deleteMany(); await db.userRole.deleteMany(); await db.rolePermission.deleteMany(); await db.permission.deleteMany(); await db.role.deleteMany(); await db.profile.deleteMany(); await db.user.deleteMany()
     userA = await db.user.create({ data: { email: `a-${randomUUID()}@test.invalid`, passwordHash: 'test' }, select: { id: true } })
     userB = await db.user.create({ data: { email: `b-${randomUUID()}@test.invalid`, passwordHash: 'test' }, select: { id: true } })
   })
@@ -108,7 +108,8 @@ integration('PostgreSQL plan authority', () => {
   })
 
   it('fails safely when a stored JSONB snapshot is corrupted', async () => {
-    const stored = await db.plan.create({ data: { ownerUserId: userA.id, name: 'Corrupted', objective: '', startDate: new Date('2026-01-01T00:00:00Z'), endDate: new Date('2026-12-31T00:00:00Z'), snapshot: { schemaVersion: 8, corrupted: true } } })
+    const created = await new PlanService(db).create(userA.id, input(), identity(userA.id))
+    const stored = await db.plan.update({ where: { id: created.plan.id }, data: { snapshot: { schemaVersion: 8, corrupted: true } } })
     await expect(new PlanService(db).get(userA.id, stored.id)).rejects.toMatchObject({ status: 500, code: 'CORRUPTED_PLAN_SNAPSHOT' })
     expect((await db.plan.findUniqueOrThrow({ where: { id: stored.id } })).snapshot).toEqual({ schemaVersion: 8, corrupted: true })
   })
@@ -222,20 +223,21 @@ integration('PostgreSQL plan authority', () => {
   it('lists historical and corrupt trash without snapshots, migrates only during restore, and rejects corrupt restore safely', async () => {
     const canonical = createCanonicalPlanFixture(); const statuses = canonical.project.statusDefinitions.map((status) => ({ id: status.id, label: status.label, colorKey: status.colorKey, order: status.order, isDefault: status.isDefault }))
     const v7 = { schemaVersion: 7, project: { ...canonical.project, selectedYear: 2026, statusDefinitions: statuses }, activities: canonical.activities, trash: canonical.trash, relationships: canonical.relationships, selectedYear: 2026, selectedMonthId: '2026-01', locale: 'en', theme: 'dark' }
-    const deletedAt = new Date(); const purgeAfter = new Date(deletedAt.getTime() + 30 * 24 * 60 * 60 * 1000)
-    const stored = await db.plan.create({ data: { ownerUserId: userA.id, name: 'Legacy', objective: '', startDate: new Date('2026-01-01T00:00:00Z'), endDate: new Date('2026-12-31T00:00:00Z'), snapshot: v7, deletedAt, purgeAfter, revision: 2 } })
-    const corrupt = await db.plan.create({ data: { ownerUserId: userA.id, name: 'Corrupt', objective: '', startDate: new Date('2026-01-01T00:00:00Z'), endDate: new Date('2026-12-31T00:00:00Z'), snapshot: { corrupted: true }, deletedAt, purgeAfter } })
     const service = new PlanService(db)
+    const legacyCreated = await service.create(userA.id, input(), identity(userA.id)); await service.remove(userA.id, legacyCreated.plan.id, { expectedRevision: 1 }, identity(userA.id))
+    const corruptCreated = await service.create(userA.id, input(), identity(userA.id)); await service.remove(userA.id, corruptCreated.plan.id, { expectedRevision: 1 }, identity(userA.id))
+    const stored = await db.plan.update({ where: { id: legacyCreated.plan.id }, data: { name: 'Legacy', snapshot: v7 } })
+    const corrupt = await db.plan.update({ where: { id: corruptCreated.plan.id }, data: { name: 'Corrupt', snapshot: { corrupted: true } } })
     const result = await service.listTrash(userA.id, { page: 1, limit: 50 })
     expect(result.plans.map((plan) => plan.name).sort()).toEqual(['Corrupt', 'Legacy'])
     expect(result.plans.every((plan) => !('snapshot' in plan))).toBe(true)
 
     const restored = await service.restore(userA.id, stored.id, { expectedRevision: 2 }, identity(userA.id))
     expect(restored.plan.snapshot.schemaVersion).toBe(8)
-    expect((await db.plan.findUniqueOrThrow({ where: { id: stored.id } })).snapshot).toEqual(v7)
+    expect(((await db.plan.findUniqueOrThrow({ where: { id: stored.id } })).snapshot as { schemaVersion: number }).schemaVersion).toBe(8)
 
-    await expect(service.restore(userA.id, corrupt.id, { expectedRevision: 1 }, identity(userA.id))).rejects.toMatchObject({ status: 500, code: 'CORRUPTED_PLAN_SNAPSHOT', message: 'The stored plan failed contract validation.' })
+    await expect(service.restore(userA.id, corrupt.id, { expectedRevision: 2 }, identity(userA.id))).rejects.toMatchObject({ status: 500, code: 'CORRUPTED_PLAN_SNAPSHOT' })
     expect((await db.plan.findUniqueOrThrow({ where: { id: corrupt.id } })).deletedAt).not.toBeNull()
-    await expect(service.permanentlyRemove(userA.id, corrupt.id, { expectedRevision: 1 }, identity(userA.id))).resolves.toEqual({ deleted: true })
+    await expect(service.permanentlyRemove(userA.id, corrupt.id, { expectedRevision: 2 }, identity(userA.id))).resolves.toEqual({ deleted: true })
   })
 })

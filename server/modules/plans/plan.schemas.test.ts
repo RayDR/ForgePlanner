@@ -23,4 +23,10 @@ describe('plan payload validation', () => {
     expect(() => planLifecycleSchema.parse({ expectedRevision: 0 })).toThrow()
     expect(() => trashQuerySchema.parse({ limit: 101 })).toThrow()
   })
+
+  it('does not allow clients to assign version provenance or lineage', () => {
+    const snapshot = createCanonicalPlanFixture()
+    expect(() => createPlanSchema.parse({ snapshot, clientMutationId: crypto.randomUUID(), source: 'AI_GENERATION' })).toThrow()
+    expect(() => updatePlanSchema.parse({ snapshot, expectedRevision: 1, actorUserId: crypto.randomUUID(), parentVersionId: crypto.randomUUID() })).toThrow()
+  })
 })

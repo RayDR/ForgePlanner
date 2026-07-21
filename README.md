@@ -50,6 +50,7 @@ NorthStar Planner is a React/Vite planner backed by a modular Node/Express API. 
 - explicit, confirmed permanent deletion with an immutable audit event
 - backend-enforced viewer read-only access
 - per-plan revisions with atomic optimistic-concurrency checks
+- immutable, linear plan-version history with restore-as-new-revision ([operations and invariants](docs/plan-version-history.md))
 - bilingual conflict resolution that can load the remote version or intentionally keep local changes
 
 ### Administration and audit

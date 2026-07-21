@@ -4,6 +4,9 @@ import { parsePlanDocument } from '../../shared/plan-contract/index.js'
 
 export interface RemotePlan { id: string; importKey?: string | null; accessLevel?: 'owner' | 'editor' | 'viewer'; sharingEnabled: boolean; name: string; objective: string | null; startDate: string; endDate: string; status: string; snapshot: unknown; revision: number; createdAt: string; updatedAt: string }
 export interface RemoteTrashPlan { id: string; sharingEnabled: boolean; name: string; objective: string | null; startDate: string; endDate: string; revision: number; deletedAt: string; purgeAfter: string; restoreEligible: boolean }
+export type PlanVersionSource = 'USER' | 'IMPORT' | 'MIGRATION' | 'SYSTEM' | 'TRASH_DELETE' | 'TRASH_RESTORE' | 'VERSION_RESTORE' | 'AI_GENERATION' | 'AI_REFINEMENT' | 'AI_PATCH'
+export interface PlanVersionMetadata { id: string; revision: number; schemaVersion: number; source: PlanVersionSource; createdAt: string; checksum: string; snapshotSizeBytes: number; isCurrent: boolean; actorDisplayName?: string | null; restoredFromRevision: number | null }
+export interface PlanVersionDetail extends Omit<PlanVersionMetadata, 'isCurrent'> { snapshot: unknown; summary: { title: string; startDate: string; endDate: string; goals: number; milestones: number; activities: number } }
 
 export class PlanRequestError extends Error {
   status: number
@@ -82,4 +85,10 @@ export const planApi = {
     return { plan: fromRemote(result.plan), restored: result.restored }
   },
   purge: (remoteId: string, expectedRevision: number) => request<{ deleted: boolean }>(`/${remoteId}/permanent`, { method: 'DELETE', body: JSON.stringify({ expectedRevision }) }),
+  versions: (remoteId: string, page = 1, limit = 25, signal?: AbortSignal) => request<{ versions: PlanVersionMetadata[]; total: number; page: number; limit: number }>(`/${remoteId}/versions?page=${page}&limit=${limit}`, { signal }),
+  version: (remoteId: string, revision: number, signal?: AbortSignal) => request<{ version: PlanVersionDetail }>(`/${remoteId}/versions/${revision}`, { signal }).then((result) => result.version),
+  restoreVersion: async (remoteId: string, revision: number, expectedRevision: number, signal?: AbortSignal) => {
+    const result = await request<{ plan: RemotePlan; restoredFromRevision: number; createdRevision: number }>(`/${remoteId}/versions/${revision}/restore`, { method: 'POST', body: JSON.stringify({ expectedRevision }), signal })
+    return { ...result, plan: fromRemote(result.plan) }
+  },
 }

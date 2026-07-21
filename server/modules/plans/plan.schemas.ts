@@ -22,3 +22,8 @@ export const trashQuerySchema = z.object({
   page: z.coerce.number().int().positive().default(1),
   limit: z.coerce.number().int().min(1).max(100).default(50),
 }).strict()
+export const versionListQuerySchema = z.object({
+  page: z.coerce.number().int().positive().default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(25),
+}).strict()
+export const versionRevisionSchema = z.coerce.number().int().positive()

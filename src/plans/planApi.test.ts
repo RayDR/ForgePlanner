@@ -40,4 +40,18 @@ describe('plan API server-first creation', () => {
     expect(JSON.parse(fetchMock.mock.calls[2][1].body)).toEqual({ expectedRevision: 2 })
     expect(JSON.parse(fetchMock.mock.calls[3][1].body)).toEqual({ expectedRevision: 2 })
   })
+
+  it('keeps history snapshots out of list responses and restores with the expected revision', async () => {
+    const metadata = { id: '33333333-3333-4333-8333-333333333333', revision: 1, schemaVersion: 8, source: 'USER', createdAt: '2026-01-01T00:00:00.000Z', checksum: 'a'.repeat(64), snapshotSizeBytes: 100, isCurrent: true, restoredFromRevision: null }
+    const restored = { id: '11111111-1111-4111-8111-111111111111', accessLevel: 'owner', sharingEnabled: true, name: 'Plan', objective: 'Goal', startDate: '2026-01-01', endDate: '2026-12-31', status: 'active', snapshot: plan.snapshot, revision: 2, createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-02T00:00:00.000Z' }
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ versions: [metadata], total: 1, page: 1, limit: 25 }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ plan: restored, restoredFromRevision: 1, createdRevision: 2 }), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    const history = await planApi.versions(restored.id)
+    expect(history.versions[0]).not.toHaveProperty('snapshot')
+    const result = await planApi.restoreVersion(restored.id, 1, 1)
+    expect(result).toMatchObject({ restoredFromRevision: 1, createdRevision: 2, plan: { remoteRevision: 2 } })
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toEqual({ expectedRevision: 1 })
+  })
 })
