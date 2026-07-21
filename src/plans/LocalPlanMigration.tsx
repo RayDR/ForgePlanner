@@ -4,31 +4,37 @@ import { useRoadmapStore } from '../hooks/useRoadmapStore'
 import type { ForgePlan } from '../types/forgePlanner'
 import { planApi, PlanConflictError, PlanRequestError } from './planApi'
 import { getIdentityScope, getScopeGeneration, isCurrentScope } from '../persistence/identityScope'
-import { readGuestPlanCandidates, removeImportedGuestPlans } from '../persistence/guestPlanMigration'
+import { readGuestPlanCandidates, removeImportedGuestPlans, subscribeGuestPlanCandidates } from '../persistence/guestPlanMigration'
 import { useSession } from '../auth/SessionProvider'
 import { useNavigate } from 'react-router-dom'
-import { getEligibleLocalPlans } from '../persistence/localPlanScope'
+import { buildVisiblePlanCards, eligibleLocalCards } from './visiblePlanCards'
+import { Modal } from '../ui/Modal'
+import { DownloadIcon, TrashIcon } from '../ui/icons'
 
 function fingerprint(plan: ForgePlan) { return JSON.stringify({ title: plan.title, description: plan.description, startDate: plan.startDate, endDate: plan.endDate, planningMode: plan.planningMode, templateKey: plan.templateKey, categories: plan.categories, monthlyViewPreference: plan.monthlyViewPreference, snapshot: plan.snapshot }) }
 
 export function LocalPlanMigration() {
   const plans = useForgePlannerStore((state) => state.plans)
-  const linkRemotePlans = useForgePlannerStore((state) => state.linkRemotePlans)
+  const archivedPlanIds = useForgePlannerStore((state) => state.archivedPlanIds)
   const reconcileRemotePlans = useForgePlannerStore((state) => state.reconcileRemotePlans)
   const replaceRemotePlan = useForgePlannerStore((state) => state.replaceRemotePlan)
   const markPlanSynced = useForgePlannerStore((state) => state.markPlanSynced)
+  const deletePlan = useForgePlannerStore((state) => state.deletePlan)
   const setPlanSync = useForgePlannerStore((state) => state.setPlanSync)
   const acceptServerPlan = useForgePlannerStore((state) => state.acceptServerPlan)
   const syncByPlanId = useForgePlannerStore((state) => state.syncByPlanId)
   const locale = useRoadmapStore((state) => state.locale)
   const { session } = useSession()
   const navigate = useNavigate()
-  const [dismissed, setDismissed] = useState(false); const [working, setWorking] = useState(false); const [error, setError] = useState('')
+  const [dismissed, setDismissed] = useState(false); const [error, setError] = useState('')
   const [conflicts, setConflicts] = useState<Record<string, { local: ForgePlan; remote: ForgePlan }>>({})
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false)
+  const [confirmDelete, setConfirmDelete] = useState(false)
   const [guestPlans, setGuestPlans] = useState<ForgePlan[]>(readGuestPlanCandidates)
   const loaded = useRef(false); const savedFingerprints = useRef(new Map<string, string>()); const savedRevisions = useRef(new Map<string, number>()); const saving = useRef(new Set<string>())
-  const accountPending = useMemo(() => getEligibleLocalPlans(plans, syncByPlanId), [plans, syncByPlanId])
-  const pending = useMemo(() => [...accountPending, ...guestPlans.filter((guest) => !accountPending.some((plan) => plan.id === guest.id))], [accountPending, guestPlans])
+  const visibleAccountPlans = useMemo(() => plans.filter((plan) => !archivedPlanIds.includes(plan.id)), [archivedPlanIds, plans])
+  const pendingCards = useMemo(() => eligibleLocalCards(buildVisiblePlanCards(visibleAccountPlans, guestPlans, syncByPlanId, !session)), [guestPlans, session, syncByPlanId, visibleAccountPlans])
+  const pending = useMemo(() => pendingCards.map((card) => card.plan), [pendingCards])
 
   useEffect(() => {
     if (!session) {
@@ -47,6 +53,8 @@ export function LocalPlanMigration() {
     })
     return () => controller.abort()
   }, [locale, reconcileRemotePlans, session])
+  useEffect(() => { queueMicrotask(() => setGuestPlans(readGuestPlanCandidates())) }, [session])
+  useEffect(() => subscribeGuestPlanCandidates(() => setGuestPlans(readGuestPlanCandidates())), [])
   useEffect(() => {
     if (!session || !loaded.current) return
     const scope = getIdentityScope(); const generation = getScopeGeneration()
@@ -90,36 +98,20 @@ export function LocalPlanMigration() {
     return () => { window.clearTimeout(timer); controller.abort() }
   }, [plans, conflicts, markPlanSynced, reconcileRemotePlans, replaceRemotePlan, setPlanSync, syncByPlanId, session])
 
-  function backup() { const blob = new Blob([JSON.stringify({ exportedAt: new Date().toISOString(), plans }, null, 2)], { type: 'application/json' }); const url = URL.createObjectURL(blob); const anchor = document.createElement('a'); anchor.href = url; anchor.download = 'northstar-local-plans-backup.json'; anchor.click(); URL.revokeObjectURL(url) }
-  async function migrate() {
-    // Guest plans are deliberately never imported implicitly. Authentication
-    // must happen first, followed by an explicit confirmation.
-    if (!session) {
-      navigate('/login', { state: { from: '/plans', localPlanIds: guestPlans.map((plan) => plan.id) } })
-      return
-    }
-    const scope = getIdentityScope(); const generation = getScopeGeneration()
-    if (!scope) return
-    setWorking(true); setError('')
-    try {
-      const remote = await planApi.import(pending)
-      if (!isCurrentScope(scope, generation)) return
-      linkRemotePlans(remote.filter((item) => item.importKey).map((item) => ({ importKey: item.importKey!, remoteId: item.id, remoteRevision: item.revision })))
-      if (guestPlans.length) {
-        removeImportedGuestPlans(guestPlans)
-        setGuestPlans([])
-      }
-      const currentRemotePlans = await planApi.list()
-      if (isCurrentScope(scope, generation)) reconcileRemotePlans(currentRemotePlans)
-    } catch (reason) {
-      if (!isCurrentScope(scope, generation)) return
-      setError(reason instanceof Error ? reason.message : (locale === 'es' ? 'La importación falló.' : 'Import failed.'))
-    } finally { if (isCurrentScope(scope, generation)) setWorking(false) }
+  function backup() { const blob = new Blob([JSON.stringify({ exportedAt: new Date().toISOString(), plans: pending }, null, 2)], { type: 'application/json' }); const url = URL.createObjectURL(blob); const anchor = document.createElement('a'); anchor.href = url; anchor.download = 'northstar-local-plans-backup.json'; anchor.click(); URL.revokeObjectURL(url) }
+  function deleteLocalPlans(withBackup: boolean) {
+    if (withBackup) backup()
+    const guestIds = new Set(guestPlans.map((plan) => plan.id))
+    const guestToRemove = pending.filter((plan) => guestIds.has(plan.id))
+    if (guestToRemove.length) removeImportedGuestPlans(guestToRemove)
+    pending.filter((plan) => !guestIds.has(plan.id)).forEach((plan) => deletePlan(plan.id))
+    setShowDeleteDialog(false); setConfirmDelete(false); setError(''); setDismissed(false)
   }
   async function keepLocal(planId: string) { const conflict = conflicts[planId]; const scope = getIdentityScope(); const generation = getScopeGeneration(); if (!conflict || !scope) return; try { const remote = await planApi.update(conflict.local, conflict.remote.remoteRevision); if (!isCurrentScope(scope, generation)) return; markPlanSynced(planId, remote.remoteRevision ?? 1); savedFingerprints.current.set(planId, fingerprint(conflict.local)); clearConflict(planId) } catch (reason) { if (isCurrentScope(scope, generation)) setError(reason instanceof Error ? reason.message : String(reason)) } }
   function clearConflict(planId: string) { setConflicts((current) => { const next = { ...current }; delete next[planId]; return next }) }
 
   async function saveOne(plan: ForgePlan) {
+    if (!session) { navigate('/login', { state: { from: '/plans', localPlanId: plan.id } }); return }
     if (saving.current.has(plan.id)) return
     const scope = getIdentityScope(); const generation = getScopeGeneration()
     if (!scope) return
@@ -129,6 +121,9 @@ export function LocalPlanMigration() {
     try {
       const result = await planApi.create(plan, clientMutationId)
       if (!isCurrentScope(scope, generation)) return
+      if (guestPlans.some((item) => item.id === plan.id)) {
+        removeImportedGuestPlans([plan]); setGuestPlans((items) => items.filter((item) => item.id !== plan.id))
+      }
       acceptServerPlan(result.plan, plan.id)
       setError('')
     } catch (reason) {
@@ -148,20 +143,17 @@ export function LocalPlanMigration() {
           <button className="btn btn-primary" type="button" onClick={() => void keepLocal(planId)}>{locale === 'es' ? 'Conservar mis cambios' : 'Keep my changes'}</button>
         </div>
       </div>) : <>
-        <p>{locale === 'es' ? `${pending.length} planes permanecen únicamente en este dispositivo. Crea un respaldo y luego guárdalos de forma segura.` : `${pending.length} plans remain only on this device. Create a backup, then save them securely.`}</p>
+        <p>{session ? (locale === 'es' ? 'Estos planes todavía no se han guardado en tu cuenta. Guárdalos individualmente o crea un respaldo antes de eliminarlos.' : 'These plans have not been saved to your account yet. Save them individually or create a backup before deleting them.') : <>{locale === 'es' ? 'Estos planes están guardados únicamente en este navegador. ' : 'These plans are stored only in this browser. '}<button className="local-plan-migration__inline-link" type="button" onClick={() => navigate('/login', { state: { from: '/plans' } })}>{locale === 'es' ? 'Inicia sesión' : 'Sign in'}</button>{locale === 'es' ? ' o ' : ' or '}<button className="local-plan-migration__inline-link" type="button" onClick={() => navigate('/register', { state: { from: '/plans' } })}>{locale === 'es' ? 'crea una cuenta' : 'create an account'}</button>{locale === 'es' ? ' para guardarlos de forma segura y acceder a ellos desde otros dispositivos.' : ' to save them securely and access them from other devices.'}</>}</p>
         <div className="local-plan-migration__items">
-          {accountPending.map((plan) => { const sync = syncByPlanId[plan.id]; return <div className="local-plan-migration__item" key={plan.id}>
+          {pendingCards.map(({ plan }) => { const sync = syncByPlanId[plan.id]; return <div className="local-plan-migration__item" key={plan.id}>
             <span className="plan-access-badge plan-sync-local">{locale === 'es' ? 'Solo local' : 'Local only'}</span><span>{plan.title}</span>
             <button className="btn" type="button" disabled={sync?.state === 'saving'} onClick={() => void saveOne(plan)}>{sync?.state === 'saving' ? (locale === 'es' ? 'Guardando…' : 'Saving…') : (locale === 'es' ? 'Guardar' : 'Save')}</button>
           </div> })}
-          {!session && guestPlans.map((plan) => <div className="local-plan-migration__item" key={plan.id}>
-            <span className="plan-access-badge plan-sync-local">{locale === 'es' ? 'Solo local' : 'Local only'}</span><span>{plan.title}</span>
-            <button className="btn" type="button" onClick={() => navigate('/login', { state: { from: '/plans', localPlanId: plan.id } })}>{locale === 'es' ? 'Iniciar sesión para guardar' : 'Sign in to save'}</button>
-          </div>)}
         </div>
       </>}
       {error ? <p className="auth-error">{error}</p> : null}
     </div>
-    {!conflictItems.length ? <div><button className="btn" onClick={backup}>{locale === 'es' ? 'Descargar respaldo' : 'Download backup'}</button>{pending.length && session ? <button className="btn btn-primary" disabled={working} onClick={() => void migrate()}>{working ? (locale === 'es' ? 'Importando…' : 'Importing…') : (locale === 'es' ? 'Importar a mi cuenta' : 'Import to my account')}</button> : null}<button className="btn" onClick={() => setDismissed(true)} aria-label={locale === 'es' ? 'Cerrar' : 'Dismiss'}>×</button></div> : null}
+    {!conflictItems.length ? <div className="local-plan-migration__actions"><button className="icon-button" type="button" onClick={backup} aria-label={locale === 'es' ? 'Crear respaldo' : 'Create backup'} title={locale === 'es' ? 'Crear respaldo' : 'Create backup'}><DownloadIcon width={17} /></button><button className="icon-button icon-button--danger" type="button" onClick={() => setShowDeleteDialog(true)} aria-label={locale === 'es' ? 'Eliminar todos los planes locales' : 'Delete all local plans'} title={locale === 'es' ? 'Eliminar todos los planes locales' : 'Delete all local plans'}><TrashIcon width={17} /></button><button className="icon-button" type="button" onClick={() => setDismissed(true)} aria-label={locale === 'es' ? 'Cerrar' : 'Dismiss'}>×</button></div> : null}
+    {showDeleteDialog ? <Modal open title={locale === 'es' ? 'Eliminar planes locales' : 'Delete local plans'} onClose={() => { setShowDeleteDialog(false); setConfirmDelete(false) }} closeLabel={locale === 'es' ? 'Cancelar' : 'Cancel'}><p>{locale === 'es' ? 'Estos planes solo existen en este navegador. Si los eliminas sin crear un respaldo, no podrás recuperarlos.' : 'These plans exist only in this browser. If you delete them without creating a backup, they cannot be recovered.'}</p><p>{locale === 'es' ? '¿Qué deseas hacer?' : 'What would you like to do?'}</p><div className="modal-footer"><button className="btn" type="button" onClick={() => { setShowDeleteDialog(false); setConfirmDelete(false) }}>{locale === 'es' ? 'Cancelar' : 'Cancel'}</button>{confirmDelete ? <button className="btn btn-danger" type="button" onClick={() => deleteLocalPlans(false)}>{locale === 'es' ? 'Confirmar eliminación' : 'Confirm deletion'}</button> : <><button className="btn" type="button" onClick={() => deleteLocalPlans(true)}>{locale === 'es' ? 'Respaldar y eliminar' : 'Back up and delete'}</button><button className="btn btn-danger" type="button" onClick={() => setConfirmDelete(true)}>{locale === 'es' ? 'Eliminar sin respaldar' : 'Delete without backup'}</button></>}</div></Modal> : null}
   </section>
 }

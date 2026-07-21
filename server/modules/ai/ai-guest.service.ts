@@ -1,11 +1,11 @@
 import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto'
 import { ApiError } from '../../http/errors.js'
-import type { AiPlanningProposal } from '../../../shared/ai-proposal-contract/index.js'
+import { parsePlanningTurn, type AiPlanningProposal, type PlanningTurn } from '../../../shared/ai-proposal-contract/index.js'
 import { assertSafeAiInput } from './ai-input-safety.js'
 import { fingerprint, prepareProposal } from './ai-integrity.js'
 import { detectProposalLanguage, selectProposalLanguage } from './ai-language.js'
 import type { AiProposalProvider } from './ai-provider.js'
-import type { ProposalInput } from './ai.schemas.js'
+import type { PlanningInput } from './ai.schemas.js'
 
 export const AI_GUEST_COOKIE = 'northstar_ai_guest'
 export const AI_GUEST_CSRF_COOKIE = 'northstar_ai_csrf'
@@ -13,6 +13,12 @@ const SESSION_MS = 4 * 60 * 60 * 1000
 type SessionClaims = { v: 1; sid: string; csrfHash: string; exp: number }
 type ProposalClaims = { v: 1; sessionHash: string; operationId: string; revision: number; checksum: string; language: 'EN' | 'ES'; status: 'PROPOSED' | 'READY_FOR_CONVERSION' | 'REJECTED'; exp: number; readyRevision?: number; readyChecksum?: string }
 type CacheEntry = { fingerprint: string; expiresAt: number; response?: unknown; pending?: Promise<unknown> }
+type GuestGenerationResponse = {
+  turn: PlanningTurn
+  operation: { id: string; status: 'PROPOSED'; selectedLanguage: 'EN' | 'ES'; detectedLanguage: 'EN' | 'ES' | 'MIXED' | 'UNKNOWN'; currentProposalRevision: number; readyProposalRevision: null; refinementCount: number; expiresAt: string }
+  proposal: AiPlanningProposal
+  signedProposalToken: string
+}
 
 function encode(value: unknown) { return Buffer.from(JSON.stringify(value)).toString('base64url') }
 function decode<T>(value: string) { return JSON.parse(Buffer.from(value, 'base64url').toString('utf8')) as T }
@@ -38,20 +44,23 @@ export class AiGuestService {
     return claims
   }
 
-  async generate(session: SessionClaims, input: ProposalInput, signal?: AbortSignal) {
-    assertSafeAiInput([input.goal, input.additionalContext ?? '', ...input.constraints, ...input.nonNegotiables]); this.cleanup()
+  async generate(session: SessionClaims, input: PlanningInput, signal?: AbortSignal): Promise<GuestGenerationResponse> {
+    assertSafeAiInput([input.goal, input.additionalContext ?? '', ...input.constraints, ...input.nonNegotiables, ...input.conversation.map((item) => item.content)]); this.cleanup()
     const sessionHash = this.hash(session.sid); this.sessionExpirations.set(sessionHash, session.exp); const cacheKey = `${sessionHash}:generate:${input.clientRequestId}`; const requestFingerprint = fingerprint({ ...input, clientRequestId: undefined })
     const operations = this.operationIds.get(sessionHash) ?? new Set<string>()
     const existingGeneration = this.cache.get(cacheKey)
     if (!existingGeneration && operations.size >= 3) throw new ApiError(429, 'AI_PROPOSAL_LIMIT_REACHED', 'The guest proposal limit has been reached.')
-    return this.cached(cacheKey, requestFingerprint, async () => {
+    return this.cached<GuestGenerationResponse>(cacheKey, requestFingerprint, async () => {
       const detected = detectProposalLanguage(`${input.goal} ${input.additionalContext ?? ''}`); const language = selectProposalLanguage({ preferred: input.preferredLanguage, detected, fallback: input.locale })
+      const result = await this.provider.planningTurn(input, { language, correlationId: input.clientRequestId, signal: signal ?? new AbortController().signal }).catch((error) => { throw this.providerError(error) })
+      let turn
+      try { turn = parsePlanningTurn(result.turn) } catch { throw new ApiError(502, 'AI_PROPOSAL_INVALID_OUTPUT', 'The proposal provider returned invalid content.') }
+      if (turn.action === 'ASK') return { turn } as unknown as GuestGenerationResponse
       const operationId = randomUUID(); operations.add(operationId); this.operationIds.set(sessionHash, operations)
-      const result = await this.provider.generateProposal(input, { language, correlationId: input.clientRequestId, signal: signal ?? new AbortController().signal }).catch((error) => { operations.delete(operationId); throw this.providerError(error) })
       let prepared
-      try { prepared = prepareProposal(result.proposal) } catch { throw new ApiError(502, 'AI_PROPOSAL_INVALID_OUTPUT', 'The proposal provider returned invalid content.') }
+      try { prepared = prepareProposal(turn.proposal) } catch { throw new ApiError(502, 'AI_PROPOSAL_INVALID_OUTPUT', 'The proposal provider returned invalid content.') }
       const claims: ProposalClaims = { v: 1, sessionHash, operationId, revision: 1, checksum: prepared.checksum, language, status: 'PROPOSED', exp: session.exp }
-      return { operation: { id: operationId, status: claims.status, selectedLanguage: language, detectedLanguage: detected, currentProposalRevision: 1, readyProposalRevision: null, refinementCount: 0, expiresAt: new Date(session.exp).toISOString() }, proposal: prepared.proposal, signedProposalToken: this.sign(claims) }
+      return { turn, operation: { id: operationId, status: 'PROPOSED', selectedLanguage: language, detectedLanguage: detected, currentProposalRevision: 1, readyProposalRevision: null, refinementCount: 0, expiresAt: new Date(session.exp).toISOString() }, proposal: prepared.proposal, signedProposalToken: this.sign(claims) }
     })
   }
 
@@ -61,17 +70,20 @@ export class AiGuestService {
     const key = `${claims.sessionHash}:${operationId}:refine:${input.clientRequestId}:${input.expectedRevision}`; const requestFingerprint = fingerprint({ expectedRevision: input.expectedRevision, instruction: input.instruction, checksum: claims.checksum })
     return this.cached(key, requestFingerprint, async () => {
       const result = await this.provider.refineProposal(input.currentProposal, input.instruction, { language: claims.language, correlationId: input.clientRequestId, signal: signal ?? new AbortController().signal }).catch((error) => { throw this.providerError(error) })
+      let turn
+      try { turn = parsePlanningTurn(result.turn) } catch { throw new ApiError(502, 'AI_PROPOSAL_INVALID_OUTPUT', 'The proposal provider returned invalid content.') }
+      if (turn.action !== 'PROPOSE') throw new ApiError(502, 'AI_PROPOSAL_INVALID_OUTPUT', 'A refinement must return a proposal.')
       let prepared
-      try { prepared = prepareProposal(result.proposal) } catch { throw new ApiError(502, 'AI_PROPOSAL_INVALID_OUTPUT', 'The proposal provider returned invalid content.') }
+      try { prepared = prepareProposal(turn.proposal) } catch { throw new ApiError(502, 'AI_PROPOSAL_INVALID_OUTPUT', 'The proposal provider returned invalid content.') }
       const next: ProposalClaims = { ...claims, revision: claims.revision + 1, checksum: prepared.checksum, status: 'PROPOSED' }
-      return { operation: { id: operationId, status: next.status, selectedLanguage: next.language, currentProposalRevision: next.revision, readyProposalRevision: null, expiresAt: new Date(next.exp).toISOString() }, proposal: prepared.proposal, signedProposalToken: this.sign(next) }
+      return { turn, operation: { id: operationId, status: next.status, selectedLanguage: next.language, currentProposalRevision: next.revision, readyProposalRevision: null, expiresAt: new Date(next.exp).toISOString() }, proposal: prepared.proposal, signedProposalToken: this.sign(next) }
     })
   }
 
   transition(session: SessionClaims, operationId: string, input: { expectedRevision: number; currentProposal: AiPlanningProposal; signedProposalToken: string }, target: 'READY_FOR_CONVERSION' | 'REJECTED') {
     const claims = this.assertProposal(session, operationId, input.expectedRevision, input.currentProposal, input.signedProposalToken, target)
     const next: ProposalClaims = { ...claims, status: target, ...(target === 'READY_FOR_CONVERSION' ? { readyRevision: claims.revision, readyChecksum: claims.checksum } : {}) }
-    return { operation: { id: operationId, status: target, selectedLanguage: next.language, currentProposalRevision: next.revision, readyProposalRevision: next.readyRevision ?? null, expiresAt: new Date(next.exp).toISOString() }, proposal: input.currentProposal, signedProposalToken: this.sign(next) }
+    return { turn: { action: 'PROPOSE' as const, proposal: input.currentProposal, language: next.language.toLowerCase() as 'en' | 'es' }, operation: { id: operationId, status: target, selectedLanguage: next.language, currentProposalRevision: next.revision, readyProposalRevision: next.readyRevision ?? null, expiresAt: new Date(next.exp).toISOString() }, proposal: input.currentProposal, signedProposalToken: this.sign(next) }
   }
 
   private assertProposal(session: SessionClaims, operationId: string, revision: number, proposal: AiPlanningProposal, token: string, target: 'PROPOSED' | 'READY_FOR_CONVERSION' | 'REJECTED') {

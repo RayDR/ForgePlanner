@@ -24,6 +24,16 @@ describe('plan API server-first creation', () => {
     expect(body).not.toHaveProperty('ownerUserId'); expect(body).not.toHaveProperty('name'); expect(body).not.toHaveProperty('objective'); expect(body).not.toHaveProperty('syncState'); expect(body.snapshot).not.toHaveProperty('syncByPlanId')
   })
 
+  it('imports a validated local plan through the idempotent server import route', async () => {
+    const remote = { id: '11111111-1111-4111-8111-111111111111', importKey: plan.id, accessLevel: 'owner', sharingEnabled: true, name: 'Plan', objective: 'Goal', startDate: '2026-01-01', endDate: '2026-12-31', status: 'active', snapshot: plan.snapshot, revision: 1, createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' }
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ plans: [remote] }), { status: 200, headers: { 'content-type': 'application/json' } }))
+    vi.stubGlobal('fetch', fetchMock)
+    const [imported] = await planApi.import([plan])
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/plans/import')
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body).plans[0]).toMatchObject({ importKey: plan.id, snapshot: plan.snapshot })
+    expect(imported).toMatchObject({ id: plan.id, remoteId: remote.id, remoteRevision: 1 })
+  })
+
   it('loads server trash and sends expected revisions for lifecycle mutations', async () => {
     const remote = { id: '11111111-1111-4111-8111-111111111111', sharingEnabled: true, name: 'Plan', objective: 'Goal', startDate: '2026-01-01', endDate: '2026-12-31', revision: 2, deletedAt: '2026-07-20T00:00:00.000Z', purgeAfter: '2026-08-19T00:00:00.000Z', restoreEligible: true }
     const restored = { id: remote.id, accessLevel: 'owner', sharingEnabled: true, name: 'Plan', objective: 'Goal', startDate: '2026-01-01', endDate: '2026-12-31', status: 'active', snapshot: plan.snapshot, revision: 3, createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' }

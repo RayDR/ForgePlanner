@@ -28,7 +28,6 @@ import {
   DownloadIcon,
   MoreVerticalIcon,
   PencilIcon,
-  PlusIcon,
   TrashIcon,
   ChevronUpIcon,
   UsersIcon,
@@ -36,7 +35,13 @@ import {
   ShareIcon,
 } from '../ui/icons'
 import { HeaderActions } from '../layout/HeaderActions'
-import { getEligibleLocalPlans } from '../persistence/localPlanScope'
+import { readGuestPlanCandidates, removeImportedGuestPlans, subscribeGuestPlanCandidates } from '../persistence/guestPlanMigration'
+import { planTemplateCatalog, getPlanTemplate } from '../data/planTemplateCatalog'
+import { buildVisiblePlanCards } from '../plans/visiblePlanCards'
+import { PlanCreateCard } from '../plans/PlanCreateCard'
+import { Modal } from '../ui/Modal'
+import type { CanonicalPlan } from '../../shared/plan-contract/index.js'
+import { AiProposalView } from './AiProposalView'
 
 type PlansFilter = 'active' | 'archived' | 'deleted'
 
@@ -69,14 +74,7 @@ interface PlanPreviewYear {
   milestoneCount: number
 }
 
-const templateOptions = (locale: Locale) => [
-  { key: 'blank', label: copy[locale].blankTemplate },
-  { key: 'career-roadmap', label: copy[locale].careerTemplate },
-  { key: 'certification-plan', label: copy[locale].certificationTemplate },
-  { key: 'savings-goal', label: copy[locale].savingsTemplate },
-  { key: 'health-lifestyle', label: copy[locale].healthTemplate },
-  { key: 'immigration-plan', label: copy[locale].immigrationTemplate },
-] as const
+const templateOptions = (locale: Locale) => planTemplateCatalog.map((template) => ({ key: template.id, label: template.title[locale] }))
 
 function defaultDraft(locale: Locale): PlanDraft {
   const today = new Date()
@@ -88,7 +86,7 @@ function defaultDraft(locale: Locale): PlanDraft {
     description: '',
     startDate: today.toISOString().slice(0, 10),
     endDate: end.toISOString().slice(0, 10),
-    planningMode: 'annual',
+    planningMode: 'auto',
     templateKey: 'blank',
     savingsEnabled: false,
     savingsMode: 'free',
@@ -216,6 +214,7 @@ export function PlansHomeView() {
   const permanentlyDeletePlan = useForgePlannerStore((state) => state.permanentlyDeletePlan)
   const clearDeletedPlans = useForgePlannerStore((state) => state.clearDeletedPlans)
   const createPlan = useForgePlannerStore((state) => state.createPlan)
+  const addLocalPlan = useForgePlannerStore((state) => state.addLocalPlan)
   const mergeRemotePlans = useForgePlannerStore((state) => state.mergeRemotePlans)
   const setRemoteSharingEnabled = useForgePlannerStore((state) => state.setRemoteSharingEnabled)
   const syncByPlanId = useForgePlannerStore((state) => state.syncByPlanId)
@@ -228,6 +227,7 @@ export function PlansHomeView() {
   const [quickEditTarget, setQuickEditTarget] = useState<ForgePlan | null>(null)
   const [quickEditDraft, setQuickEditDraft] = useState<PlanDraft | null>(null)
   const [showCreate, setShowCreate] = useState(false)
+  const [showAiStart, setShowAiStart] = useState(false)
   const [plansFilter, setPlansFilter] = useState<PlansFilter>('active')
   const [createDraft, setCreateDraft] = useState<PlanDraft>(() => defaultDraft(locale))
   const menuRef = useRef<HTMLDivElement | null>(null)
@@ -237,6 +237,7 @@ export function PlansHomeView() {
   const [showBackToTop, setShowBackToTop] = useState(false)
   const [undoDelete, setUndoDelete] = useState<{ kind: 'local'; deletedId: string; title: string } | { kind: 'remote'; remoteId: string; revision: number; title: string } | null>(null)
   const [accountTrash, setAccountTrash] = useState<ServerTrashPlan[]>([])
+  const [guestLocalPlans, setGuestLocalPlans] = useState<ForgePlan[]>(() => readGuestPlanCandidates())
   const [accountTrashTotal, setAccountTrashTotal] = useState(0)
   const [trashPage, setTrashPage] = useState(1)
   const [trashLoading, setTrashLoading] = useState(false)
@@ -245,6 +246,8 @@ export function PlansHomeView() {
   const [confirmClearDeleted, setConfirmClearDeleted] = useState(false)
   const [createSaving, setCreateSaving] = useState(false)
   const [createError, setCreateError] = useState('')
+  const [importPreview, setImportPreview] = useState<ForgePlan | null>(null)
+  const [importError, setImportError] = useState('')
   const [savingLocalId, setSavingLocalId] = useState<string | null>(null)
   const createRequestRef = useRef<AbortController | null>(null)
 
@@ -253,11 +256,15 @@ export function PlansHomeView() {
     () => plans.filter((plan) => !archivedPlanIds.includes(plan.id)),
     [plans, archivedPlanIds],
   )
+  const visiblePlanCards = useMemo(() => buildVisiblePlanCards(activePlans, guestLocalPlans, syncByPlanId, !session), [activePlans, guestLocalPlans, session, syncByPlanId])
   const archivedPlans = useMemo(() => plans.filter((plan) => archivedPlanIds.includes(plan.id)), [plans, archivedPlanIds])
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme)
   }, [theme])
+
+  useEffect(() => { queueMicrotask(() => setGuestLocalPlans(readGuestPlanCandidates())) }, [session])
+  useEffect(() => subscribeGuestPlanCandidates(() => setGuestLocalPlans(readGuestPlanCandidates())), [])
 
   useEffect(() => {
     function onDocumentClick(event: MouseEvent) {
@@ -315,11 +322,11 @@ export function PlansHomeView() {
 
   const previewByPlan = useMemo(() => {
     const next = new Map<string, PlanPreviewYear[]>()
-    for (const plan of activePlans) {
+    for (const { plan } of visiblePlanCards) {
       next.set(plan.id, buildPlanPreview(plan, locale))
     }
     return next
-  }, [activePlans, locale])
+  }, [locale, visiblePlanCards])
 
   function openSelectedPlan(plan: ForgePlan) {
     openPlan(plan.id)
@@ -391,6 +398,30 @@ export function PlansHomeView() {
     }
   }
 
+  function importedPlan(snapshot: CanonicalPlan): ForgePlan {
+    const now = new Date().toISOString()
+    return { id: `import:${crypto.randomUUID()}`, title: snapshot.project.name, description: snapshot.project.objective, startDate: snapshot.project.startDate, endDate: snapshot.project.endDate, planningMode: snapshot.metadata.planningMode ?? 'auto', templateKey: snapshot.metadata.templateKey, categories: snapshot.project.categoryDefinitions.map((item) => item.key), monthlyViewPreference: 'list', snapshot, createdAt: now, updatedAt: now }
+  }
+
+  async function inspectImport(file: File) {
+    setImportError('')
+    try {
+      const parsed = parsePlanDocument(JSON.parse(await file.text()))
+      if (!parsed.success) throw new Error(locale === 'es' ? 'El archivo no contiene un plan compatible.' : 'The file does not contain a compatible plan.')
+      setImportPreview(importedPlan(parsed.plan))
+    } catch (reason) { setImportError(reason instanceof Error ? reason.message : String(reason)) }
+  }
+
+  async function confirmImport() {
+    if (!importPreview) return
+    if (!session) { addLocalPlan(importPreview); setImportPreview(null); navigate(`/plans/${importPreview.id}/roadmap`); return }
+    const scope = getIdentityScope(); const generation = getScopeGeneration(); if (!scope) return
+    setCreateSaving(true); setImportError('')
+    try { const [plan] = await planApi.import([importPreview]); if (!plan || !isCurrentScope(scope, generation)) return; acceptServerPlan(plan); setImportPreview(null); navigate(`/plans/${plan.id}/roadmap`) }
+    catch (reason) { if (isCurrentScope(scope, generation)) setImportError(reason instanceof Error ? reason.message : String(reason)) }
+    finally { if (isCurrentScope(scope, generation)) setCreateSaving(false) }
+  }
+
   async function retryCreate(plan: ForgePlan) {
     const metadata = syncByPlanId[plan.id]
     if (!metadata?.clientMutationId) return
@@ -421,7 +452,10 @@ export function PlansHomeView() {
     try {
       const result = await planApi.create(plan, clientMutationId)
       if (!isCurrentScope(scope, generation)) return
-      acceptServerPlan(result.plan, plan.id)
+      if (guestLocalPlans.some((item) => item.id === plan.id)) {
+        removeImportedGuestPlans([plan]); setGuestLocalPlans((items) => items.filter((item) => item.id !== plan.id))
+        acceptServerPlan(result.plan, plan.id)
+      } else acceptServerPlan(result.plan, plan.id)
     } catch (reason) {
       if (isCurrentScope(scope, generation)) setPlanSync(plan.id, { state: 'failed', clientMutationId, error: { code: reason instanceof PlanRequestError ? reason.code : 'PLAN_SYNC_FAILED', message: reason instanceof Error ? reason.message : String(reason) } })
     } finally { if (isCurrentScope(scope, generation)) setSavingLocalId(null) }
@@ -447,6 +481,21 @@ export function PlansHomeView() {
     setQuickEditTarget(null)
   }
 
+  function selectTemplate(templateKey: PlanTemplateKey) {
+    const template = getPlanTemplate(templateKey)
+    setCreateDraft((current) => ({
+      ...current,
+      templateKey,
+      title: current.title.trim() ? current.title : template.defaultTitle[locale],
+      description: current.description.trim() ? current.description : template.defaultObjective[locale],
+      planningMode: template.planningMode,
+      savingsEnabled: template.savings?.enabled ?? current.savingsEnabled,
+      savingsMode: template.savings?.mode ?? current.savingsMode,
+      defaultMonthlyTarget: template.savings && current.defaultMonthlyTarget === 0 ? template.savings.defaultMonthlyTarget : current.defaultMonthlyTarget,
+      categoryDefinitions: template.categories.map((category) => ({ ...category })),
+    }))
+  }
+
   function closeMenu() {
     setOpenMenuId(null)
   }
@@ -457,6 +506,10 @@ export function PlansHomeView() {
   }
 
   async function handleDeletePlan(plan: ForgePlan) {
+    if (guestLocalPlans.some((item) => item.id === plan.id)) {
+      removeImportedGuestPlans([plan])
+      return
+    }
     if (session && plan.remoteId) {
       if (syncByPlanId[plan.id]?.state === 'deleting') return
       const scope = getIdentityScope(); const generation = getScopeGeneration()
@@ -583,7 +636,7 @@ export function PlansHomeView() {
                 <h1>{t.yourPlans}</h1>
               </div>
             </div>
-            <div className="plans-header-actions"><button type="button" className="btn btn-primary" onClick={() => navigate('/ai/plan-proposals')}>{locale === 'es' ? 'Planear con IA' : 'Plan with AI'}</button><HeaderActions
+            <div className="plans-header-actions"><HeaderActions
               locale={locale}
               theme={theme}
               onToggleLocale={() => { const next = locale === 'es' ? 'en' : 'es'; setLocale(next); void setAppearance({ locale: next }) }}
@@ -601,7 +654,7 @@ export function PlansHomeView() {
 
         <nav className="plans-filter-tabs" aria-label={locale === 'es' ? 'Filtrar planes' : 'Filter plans'}>
           {([
-            ['active', t.yourPlans, activePlans.length],
+            ['active', t.yourPlans, visiblePlanCards.length],
             ['archived', t.archived, archivedPlans.length],
             ['deleted', t.recentlyDeleted, session ? accountTrashTotal : deletedPlans.length],
           ] as const).map(([filter, label, count]) => (
@@ -611,26 +664,27 @@ export function PlansHomeView() {
           ))}
         </nav>
 
-        <main ref={plansScrollerRef} className="plans-main-grid" onScroll={(event) => setShowBackToTop(event.currentTarget.scrollTop > 180)}>
+        <section className="plans-workspace" data-workspace={showAiStart ? 'ai' : 'plans'}>
+        {showAiStart ? <AiProposalView embedded onBack={() => setShowAiStart(false)} /> : <main ref={plansScrollerRef} className="plans-main-grid" onScroll={(event) => setShowBackToTop(event.currentTarget.scrollTop > 180)}>
           <section className="plans-grid" aria-label={t.yourPlans} hidden={plansFilter !== 'active'}>
-            {activePlans.length ? (
-              activePlans.map((plan) => {
+            {visiblePlanCards.map((card) => {
+                const plan = card.plan
                 const previewYears = previewByPlan.get(plan.id) ?? []
                 const sync = syncByPlanId[plan.id]
-                const createPending = !plan.remoteId && sync?.clientMutationId
+                const createPending = card.source === 'account-local-outbox' && !plan.remoteId && Boolean(sync?.clientMutationId)
 
                 return (
                   <article
                     key={plan.id}
                     className="plan-card card"
-                    role={createPending ? undefined : 'link'}
-                    tabIndex={createPending ? -1 : 0}
+                    role={createPending || !card.canOpen ? undefined : 'link'}
+                    tabIndex={createPending || !card.canOpen ? -1 : 0}
                     aria-label={`${plan.title}. ${t.openPlanTooltip}`}
-                    onClick={() => { if (!createPending) openSelectedPlan(plan) }}
+                    onClick={() => { if (!createPending && card.canOpen) openSelectedPlan(plan) }}
                     onKeyDown={(event) => {
                       if (event.key === 'Enter' || event.key === ' ') {
                         event.preventDefault()
-                        if (!createPending) openSelectedPlan(plan)
+                        if (!createPending && card.canOpen) openSelectedPlan(plan)
                       }
                     }}
                   >
@@ -638,7 +692,7 @@ export function PlansHomeView() {
                       <div className="plan-card__title-block">
                         <p className="plan-card__kicker">{plan.planningMode === 'monthly' ? t.monthlyView : t.annualView}</p>
                         <h2 onDoubleClick={(event) => editPlan(event, plan)} title={locale === 'es' ? 'Doble clic para editar' : 'Double-click to edit'}>{plan.title}</h2>
-                        {sync && sync.state !== 'synced' ? <span className={`plan-access-badge plan-sync-${sync.state}`}>{sync.state === 'saving' ? (locale === 'es' ? 'Guardando…' : 'Saving…') : sync.state === 'deleting' ? (locale === 'es' ? 'Eliminando…' : 'Deleting…') : sync.state === 'offline' ? (locale === 'es' ? 'Sin conexión' : 'Offline') : sync.state === 'failed' ? (locale === 'es' ? 'Error al guardar' : 'Save failed') : sync.state}</span> : null}
+                        {card.source === 'guest-local' ? <span className={`plan-access-badge plan-sync-${card.syncState}`}>{card.syncState === 'saving' ? (locale === 'es' ? 'Guardando…' : 'Saving…') : card.canRetry ? (locale === 'es' ? 'Error al guardar' : 'Save error') : (locale === 'es' ? 'SOLO LOCAL' : 'LOCAL ONLY')}</span> : sync && sync.state !== 'synced' ? <span className={`plan-access-badge plan-sync-${sync.state}`}>{sync.state === 'saving' ? (locale === 'es' ? 'Guardando…' : 'Saving…') : sync.state === 'deleting' ? (locale === 'es' ? 'Eliminando…' : 'Deleting…') : sync.state === 'offline' ? (locale === 'es' ? 'Sin conexión' : 'Offline') : sync.state === 'failed' ? (locale === 'es' ? 'Error al guardar' : 'Save failed') : (locale === 'es' ? 'SOLO LOCAL' : 'LOCAL ONLY')}</span> : null}
                         {plan.remoteAccess && plan.remoteAccess !== 'owner' ? <span className="plan-access-badge">{plan.remoteAccess === 'editor' ? (locale === 'es' ? 'Compartido · editor' : 'Shared · editor') : (locale === 'es' ? 'Compartido · lectura' : 'Shared · view')}</span> : null}
                       </div>
                       <div className="plan-card__actions" ref={openMenuId === plan.id ? menuRef : undefined}>
@@ -650,12 +704,12 @@ export function PlansHomeView() {
                         </IconButton>
                         {openMenuId === plan.id ? (
                           <div className="plan-card__menu" onClick={(event) => event.stopPropagation()}>
-                            {plan.remoteAccess !== 'viewer' ? <button type="button" onClick={() => { setQuickEditTarget(plan); closeMenu() }}><PencilIcon width={16} height={16} /> {t.edit}</button> : null}
+                            {card.source !== 'guest-local' && plan.remoteAccess !== 'viewer' ? <button type="button" onClick={() => { setQuickEditTarget(plan); closeMenu() }}><PencilIcon width={16} height={16} /> {t.edit}</button> : null}
                             {plan.remoteAccess === 'owner' && plan.remoteId ? <button type="button" onClick={() => { setSharingPlan(plan); closeMenu() }}><ShareIcon width={16} height={16} /> {t.share}</button> : null}
                             {plan.remoteAccess === 'owner' && plan.remoteId ? <button type="button" onClick={() => { void togglePlanSharing(plan); closeMenu() }}><LockIcon width={16} height={16} /> {plan.remoteSharingEnabled === false ? t.unlockAccess : t.makePrivate}</button> : null}
-                            <button type="button" onClick={() => { duplicatePlan(plan.id); closeMenu() }}><CopyIcon width={16} height={16} /> {t.duplicate}</button>
-                            {plan.remoteAccess === 'owner' || !plan.remoteAccess ? <button type="button" onClick={() => { void handleArchivePlan(plan); closeMenu() }}><ArchiveIcon width={16} height={16} /> {t.archive}</button> : null}
-                            {!plan.remoteId && getEligibleLocalPlans([plan], syncByPlanId).length > 0 ? <button type="button" disabled={savingLocalId === plan.id} onClick={() => { void saveLocalPlan(plan); closeMenu() }}>{savingLocalId === plan.id ? (locale === 'es' ? 'Guardando…' : 'Saving…') : (locale === 'es' ? 'Guardar en mi cuenta' : 'Save to my account')}</button> : null}
+                            {card.source !== 'guest-local' ? <button type="button" onClick={() => { duplicatePlan(plan.id); closeMenu() }}><CopyIcon width={16} height={16} /> {t.duplicate}</button> : null}
+                            {card.source !== 'guest-local' && (plan.remoteAccess === 'owner' || !plan.remoteAccess) ? <button type="button" onClick={() => { void handleArchivePlan(plan); closeMenu() }}><ArchiveIcon width={16} height={16} /> {t.archive}</button> : null}
+                            {card.canSync ? <button type="button" disabled={savingLocalId === plan.id} onClick={() => { void saveLocalPlan(plan); closeMenu() }}><DownloadIcon width={16} height={16} /> {savingLocalId === plan.id ? (locale === 'es' ? 'Guardando…' : 'Saving…') : (locale === 'es' ? 'Sincronizar' : 'Sync')}</button> : null}
                             <button type="button" onClick={() => { handleExportPlan(plan); closeMenu() }}><DownloadIcon width={16} height={16} /> {t.export}</button>
                             {plan.remoteAccess === 'owner' || !plan.remoteAccess ? <button type="button" className="danger" disabled={sync?.state === 'deleting'} onClick={() => { void handleDeletePlan(plan); closeMenu() }}><TrashIcon width={16} height={16} /> {t.delete}</button> : null}
                           </div>
@@ -664,7 +718,7 @@ export function PlansHomeView() {
                     </header>
 
                     <p className="plan-card__description" onDoubleClick={(event) => editPlan(event, plan)} title={locale === 'es' ? 'Doble clic para editar' : 'Double-click to edit'}>{plan.description || t.noPlans}</p>
-                    {createPending ? <div className="plan-sync-actions" onClick={(event) => event.stopPropagation()}><span>{sync?.error?.message}</span><button className="btn btn-primary" type="button" disabled={sync?.state === 'saving'} onClick={() => void retryCreate(plan)}>{locale === 'es' ? 'Reintentar' : 'Retry'}</button></div> : null}
+                    {card.canRetry ? <div className="plan-sync-actions plan-sync-actions--compact" onClick={(event) => event.stopPropagation()}><span>{sync?.error?.message}</span><IconButton label={locale === 'es' ? 'Reintentar guardado' : 'Retry save'} onClick={() => void retryCreate(plan)}>↻</IconButton></div> : null}
                     <div className="plan-card__preview-head"><span>{locale === 'es' ? 'Calendario' : 'Calendar'}</span><small>{locale === 'es' ? 'Actualizado' : 'Updated'}: {new Date(plan.updatedAt).toLocaleDateString()}</small></div>
                     <div className="plan-card__preview" onClick={(event) => event.stopPropagation()}>
                       <PlanPreviewCarousel plan={plan} years={previewYears} locale={locale} onOpenYear={openPlanYear} onOpenMonth={openPlanMonth} />
@@ -672,25 +726,9 @@ export function PlansHomeView() {
                     <footer className="plan-card__footer"><span>{locale === 'es' ? 'Finaliza' : 'Ends'}</span><strong>{plan.endDate}</strong></footer>
                   </article>
                 )
-              })
-            ) : (
-              <Card className="empty-state">
-                <h2>{t.noPlans}</h2>
-                <p>{t.createPlanSubtitle}</p>
-              </Card>
-            )}
+              })}
 
-            <button
-              type="button"
-              className="plan-card plan-card-create card create-plan-card"
-              onClick={() => {
-                setCreateDraft(defaultDraft(locale))
-                setShowCreate(true)
-              }}
-            >
-              <span className="create-plan-card__icon"><PlusIcon width={48} height={48} /></span>
-              <span className="create-plan-tooltip" role="tooltip">{t.createPlan}</span>
-            </button>
+            <PlanCreateCard locale={locale} onAi={() => setShowAiStart(true)} onManual={() => { setCreateDraft(defaultDraft(locale)); setShowCreate(true) }} onImport={(file) => void inspectImport(file)} />
           </section>
 
           {plansFilter !== 'active' ? (
@@ -723,7 +761,8 @@ export function PlansHomeView() {
               ))}</> : <div className="empty-state">{t.noDeleted}</div>)}
             </section>
           ) : null}
-        </main>
+        </main>}
+        </section>
         {showBackToTop ? <button type="button" className="plans-back-to-top" aria-label={locale === 'es' ? 'Volver arriba' : 'Back to top'} onClick={() => plansScrollerRef.current?.scrollTo({ top: 0, behavior: 'smooth' })}><ChevronUpIcon width={20} height={20} /></button> : null}
         <footer className="domoforge-footer">{locale === 'es' ? 'Diseñado y desarrollado por' : 'Designed and developed by'} <a href="https://domoforge.com" target="_blank" rel="noreferrer">Domoforge</a></footer>
       </div>
@@ -839,22 +878,19 @@ export function PlansHomeView() {
                   <label className="field-wrap">
                     <span>{t.defaultView}</span>
                     <select className="field-input" value={createDraft.planningMode} onChange={(event) => setCreateDraft((current) => ({ ...current, planningMode: event.target.value as PlanningMode }))}>
-                      <option value="annual">{t.annualView}</option>
-                      <option value="monthly">{t.monthlyView}</option>
-                      <option value="auto">{t.automaticView}</option>
+                      <option value="auto">{locale === 'es' ? 'Elegir automáticamente' : 'Choose automatically'}</option><option value="annual">{locale === 'es' ? 'Anual — metas amplias' : 'Yearly — broader milestones'}</option><option value="monthly">{locale === 'es' ? 'Mensual — ejecución detallada' : 'Monthly — detailed execution'}</option>
                     </select>
                   </label>
                   <label className="field-wrap">
                     <span>{t.template}</span>
-                    <select className="field-input" value={createDraft.templateKey} onChange={(event) => setCreateDraft((current) => ({ ...current, templateKey: event.target.value as PlanTemplateKey }))}>
+                    <select className="field-input" value={createDraft.templateKey} onChange={(event) => selectTemplate(event.target.value as PlanTemplateKey)}>
                       {templateOptions(locale).map((template) => (
                         <option key={template.key} value={template.key}>{template.label}</option>
                       ))}
                     </select>
                   </label>
                 </div>
-                <PlanSavingsConfig locale={locale} value={createDraft} onChange={(settings) => setCreateDraft((current) => ({ ...current, ...settings }))} />
-                <PlanCategoryEditor locale={locale} value={createDraft.categoryDefinitions} sources={plans.map((plan) => ({ id: plan.id, title: plan.title, categories: getPlanCategoryDefinitions(plan) }))} onChange={(categoryDefinitions) => setCreateDraft((current) => ({ ...current, categoryDefinitions }))} />
+                <details className="plan-creation-advanced"><summary>{locale === 'es' ? 'Opciones avanzadas' : 'Advanced options'}</summary><div className="stack-sm"><PlanSavingsConfig locale={locale} templateIncluded={createDraft.templateKey === 'savings-goal'} value={createDraft} onChange={(settings) => setCreateDraft((current) => ({ ...current, ...settings }))} /><PlanCategoryEditor locale={locale} value={createDraft.categoryDefinitions} sources={plans.map((plan) => ({ id: plan.id, title: plan.title, categories: getPlanCategoryDefinitions(plan) }))} onChange={(categoryDefinitions) => setCreateDraft((current) => ({ ...current, categoryDefinitions }))} /></div></details>
               </div>
             </div>
             <footer className="modal-footer">
@@ -865,6 +901,8 @@ export function PlansHomeView() {
           </div>
         </div>
       ) : null}
+      {importPreview ? <Modal open title={locale === 'es' ? 'Importar plan' : 'Import plan'} onClose={() => setImportPreview(null)} closeLabel={t.cancel}><div className="stack-sm"><p>{locale === 'es' ? 'Revisa el plan antes de importarlo.' : 'Review the plan before importing it.'}</p><dl><div><dt>{t.title}</dt><dd>{importPreview.title}</dd></div><div><dt>{t.startDate}</dt><dd>{importPreview.startDate}</dd></div><div><dt>{t.endDate}</dt><dd>{importPreview.endDate}</dd></div></dl>{importError ? <p className="auth-error" role="alert">{importError}</p> : null}<footer className="modal-footer"><button className="btn" type="button" onClick={() => setImportPreview(null)}>{t.cancel}</button><button className="btn btn-primary" type="button" disabled={createSaving} onClick={() => void confirmImport()}>{createSaving ? (locale === 'es' ? 'Importando…' : 'Importing…') : (locale === 'es' ? 'Importar' : 'Import')}</button></footer></div></Modal> : null}
+      {importError && !importPreview ? <div className="undo-toast" role="alert"><span>{importError}</span><button type="button" className="undo-toast__close" onClick={() => setImportError('')} aria-label={t.cancel}>×</button></div> : null}
     </div>
   )
 }

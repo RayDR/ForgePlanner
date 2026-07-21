@@ -10,19 +10,20 @@ interface PlanSavingsConfigProps {
   locale: Locale
   value: PlanSavingsSettings
   onChange: (value: PlanSavingsSettings) => void
+  templateIncluded?: boolean
 }
 
-export function PlanSavingsConfig({ locale, value, onChange }: PlanSavingsConfigProps) {
+export function PlanSavingsConfig({ locale, value, onChange, templateIncluded = false }: PlanSavingsConfigProps) {
   return (
     <div className="plan-savings-config">
-      <label className="progress-mode-toggle">
+      {templateIncluded ? <p className="savings-template-note">{locale === 'es' ? 'El seguimiento de ahorro está incluido en esta plantilla.' : 'Savings tracking is included with this template.'}</p> : <label className="progress-mode-toggle">
         <input
           type="checkbox"
           checked={value.savingsEnabled}
           onChange={(event) => onChange({ ...value, savingsEnabled: event.target.checked })}
         />
         <span>{locale === 'es' ? 'Registrar ahorro en este plan' : 'Track savings in this plan'}</span>
-      </label>
+      </label>}
       {value.savingsEnabled ? (
         <div className="form-grid form-grid-compact">
           <label className="field-wrap">

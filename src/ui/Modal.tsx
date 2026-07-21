@@ -1,4 +1,4 @@
-import { useEffect, useRef, type PropsWithChildren, type ReactNode } from 'react'
+import { useEffect, useId, useRef, type PropsWithChildren, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 
 interface ModalProps extends PropsWithChildren {
@@ -21,6 +21,7 @@ export function ModalPortal({ children }: PropsWithChildren) {
 export function Modal({ open, title, onClose, actions, headerActions, closeLabel = 'Close', closeAriaLabel = 'Close modal', children }: ModalProps) {
   const dialogRef = useRef<HTMLDivElement>(null)
   const returnFocusRef = useRef<HTMLElement | null>(null)
+  const titleId = useId()
   useEffect(() => {
     if (!open) return
     returnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
@@ -44,9 +45,9 @@ export function Modal({ open, title, onClose, actions, headerActions, closeLabel
   }
   const content = (
     <div className="modal-overlay" role="presentation" onClick={onClose}>
-      <div ref={dialogRef} className="modal-shell" role="dialog" aria-modal="true" aria-label={title} onClick={(event) => event.stopPropagation()}>
+      <div ref={dialogRef} className="modal-shell" role="dialog" aria-modal="true" aria-labelledby={titleId} onClick={(event) => event.stopPropagation()}>
         <header className="modal-header">
-          <h2>{title}</h2>
+          <h2 id={titleId}>{title}</h2>
           <div className="modal-header-actions">
             {headerActions}
             <button className="btn btn-ghost modal-close-button" onClick={onClose} aria-label={closeAriaLabel}>{closeLabel}</button>

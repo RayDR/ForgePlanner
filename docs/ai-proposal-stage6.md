@@ -1,8 +1,24 @@
 # AI proposal engine (Stage 6)
 
-Stage 6 is deliberately limited to a deterministic mock provider. It stops at
-`READY_FOR_CONVERSION` and never creates a canonical `Plan`, `PlanVersion`, or
-calls an external AI provider.
+Stage 6 stops at `READY_FOR_CONVERSION` and never creates a canonical `Plan` or
+`PlanVersion`. The deterministic mock remains the default. An OpenAI provider
+can be enabled explicitly on the backend with `AI_PROVIDER=openai`.
+
+## Conversational planning turns
+
+Every generation turn is validated as exactly one strict `ASK` or `PROPOSE`
+action. `ASK` contains one concise question, optional suggested answers and a
+bounded list of missing information. `PROPOSE` contains the existing strict,
+human-readable proposal contract. Unknown fields and invalid turns are
+rejected. Vague business requests ask for the business type first; supplied
+duration, budget and availability controls are honored; the assistant proposes
+after no more than three clarification questions or when the user elects to
+continue with explicit assumptions.
+
+The bounded conversation transcript is tab/session state under the
+identity-scoped `ai-conversation` namespace. It is not written to PostgreSQL,
+localStorage, URLs, logs or the canonical plan JSON. Leaving and reopening in
+the same active tab resumes it; Start over clears it after confirmation.
 
 ## Data and lifecycle
 
@@ -37,8 +53,13 @@ guest cookie, CSRF token, signature, operation/revision, strict proposal schema
 and canonical checksum before provider use. A token from another session or a
 previous revision is rejected. Ready and rejected states are server-validated.
 
+Production requires an independent `AI_GUEST_SESSION_SIGNING_KEY` containing
+at least 32 characters (64 random hexadecimal characters are recommended).
+Missing configuration is treated as a startup error so a deployment cannot
+appear healthy while normal guest proposal sessions are unavailable.
+
 Authenticated provider calls follow three short phases: reserve the operation
-and lease in a transaction, call the mock provider outside any transaction,
+and lease in a transaction, call the selected provider outside any transaction,
 then verify the lease and persist the immutable revision in a short transaction.
 Expired leases are repaired in bounded batches: pending generation becomes
 `FAILED/AI_PROVIDER_INTERRUPTED`; refinement returns to `PROPOSED` and retains
@@ -50,3 +71,21 @@ Mock usage is factual: request ID is deterministic and token/cost fields are
 `null`; no usage is fabricated. Input checks reject clear credentials before
 provider invocation, and proposal strings render as text under the existing
 Helmet/CSP policy.
+
+## OpenAI activation
+
+The OpenAI implementation uses the official Node SDK, Responses API and a
+strict Structured Output envelope for the planning turn. The API key is read
+only by the backend. Requests have a bounded timeout, SDK retries are disabled,
+and NorthStar performs one retry only when structured output is invalid. Raw
+prompts and responses are never logged. Configure:
+
+```dotenv
+AI_PROVIDER=openai
+OPENAI_API_KEY=REPLACE_WITH_A_BACKEND_SECRET
+OPENAI_PROPOSAL_MODEL=gpt-5.6-sol
+OPENAI_TIMEOUT_MS=20000
+```
+
+If `AI_PROVIDER` is absent it defaults to `mock`. If it is explicitly set to
+`openai`, a missing key is a startup configuration error.

@@ -11,11 +11,11 @@ import type { AiPlanningProposal } from '../../../shared/ai-proposal-contract/in
 const testUrl = process.env.TEST_DATABASE_URL
 const integration = testUrl ? describe : describe.skip
 const identity = (id: string) => ({ actorUserId: id, effectiveUserId: id })
-const input = (clientRequestId = randomUUID(), goal = 'Improve my career over six months'): ProposalInput => ({ clientRequestId, goal, additionalContext: null, startDate: null, targetDate: null, durationMonths: 6, hoursPerWeek: 5, monthlyBudget: null, currency: null, constraints: [], nonNegotiables: [], experienceLevel: null, preferredLanguage: 'en', planIntensity: 'balanced', locale: 'en' })
+const input = (clientRequestId = randomUUID(), goal = 'Improve my career over six months'): ProposalInput => ({ clientRequestId, goal, additionalContext: null, startDate: null, targetDate: null, durationMonths: 6, hoursPerWeek: 5, monthlyBudget: null, currency: null, constraints: [], nonNegotiables: [], experienceLevel: null, preferredLanguage: 'en', planIntensity: 'balanced', locale: 'en', conversation: [], clarificationCount: 0, continueWithAssumptions: true })
 
 class GateProvider implements AiProposalProvider {
   readonly name = 'mock'; readonly model = 'gated-v1'; private delegate = new MockAiProposalProvider(); started!: () => void; release!: () => void; startedPromise = new Promise<void>((resolve) => { this.started = resolve }); gate = new Promise<void>((resolve) => { this.release = resolve })
-  async generateProposal(value: ProposalInput, context: ProviderContext) { this.started(); await this.gate; return this.delegate.generateProposal(value, context) }
+  async planningTurn(value: ProposalInput, context: ProviderContext) { this.started(); await this.gate; return this.delegate.planningTurn(value, context) }
   async refineProposal(current: AiPlanningProposal, instruction: string, context: ProviderContext) { this.started(); await this.gate; return this.delegate.refineProposal(current, instruction, context) }
 }
 

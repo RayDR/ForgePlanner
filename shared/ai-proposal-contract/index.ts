@@ -35,6 +35,24 @@ export const aiPlanningProposalSchema = z.object({
 export type AiPlanningProposal = z.infer<typeof aiPlanningProposalSchema>
 export type AiProposalPhase = z.infer<typeof proposalPhaseSchema>
 
+export const planningTurnSchema = z.discriminatedUnion('action', [
+  z.object({
+    action: z.literal('ASK'),
+    question: text(600),
+    suggestedAnswers: list(text(160), 6).optional(),
+    missingInformation: list(text(120), 8),
+    language: z.enum(['en', 'es']),
+  }).strict(),
+  z.object({
+    action: z.literal('PROPOSE'),
+    proposal: aiPlanningProposalSchema,
+    language: z.enum(['en', 'es']),
+  }).strict(),
+])
+
+export type PlanningTurn = z.infer<typeof planningTurnSchema>
+const planningTurnEnvelopeSchema = z.object({ turn: planningTurnSchema }).strict()
+
 export const AI_PROPOSAL_MAX_BYTES = 64 * 1024
 
 function sortKeys(value: unknown): unknown {
@@ -53,4 +71,14 @@ export function parseAiPlanningProposal(input: unknown) {
 
 export function aiProposalJsonSchema() {
   return z.toJSONSchema(aiPlanningProposalSchema, { target: 'draft-7' })
+}
+
+export function parsePlanningTurn(input: unknown) {
+  const turn = planningTurnSchema.parse(input)
+  if (turn.action === 'PROPOSE') parseAiPlanningProposal(turn.proposal)
+  return turn
+}
+
+export function planningTurnJsonSchema() {
+  return z.toJSONSchema(planningTurnEnvelopeSchema, { target: 'draft-7' })
 }

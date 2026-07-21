@@ -208,6 +208,8 @@ export function MonthlyFocusView() {
           milestone: "Hitos",
           past: "Este mes ya pasó. Puedes seguir editándolo sin restricciones.",
           create: "Nueva actividad",
+          addContribution: "Registrar aportación",
+          addExpense: "Registrar gasto",
           activityTitle: "Título",
           description: "Descripción",
           cancel: "Cancelar",
@@ -237,6 +239,8 @@ export function MonthlyFocusView() {
           milestone: "Milestones",
           past: "This month is in the past. You can still edit it without restrictions.",
           create: "New activity",
+          addContribution: "Add contribution",
+          addExpense: "Add expense",
           activityTitle: "Title",
           description: "Description",
           cancel: "Cancel",
@@ -311,6 +315,17 @@ export function MonthlyFocusView() {
     setCreateOpen(false);
   }
 
+  function openActivityCreator(category?: string) {
+    setActivityDraft((draft) => ({
+      ...draft,
+      category: category ?? draft.category,
+      startDate: `${activeMonthId}-01`,
+      endDate: monthEndDate(activeMonthId),
+      recurrenceEndDate: project.endDate,
+    }));
+    setCreateOpen(true);
+  }
+
   return (
     <div className="monthly-layout">
       <aside className="month-sidebar card">
@@ -370,7 +385,7 @@ export function MonthlyFocusView() {
             <button
               type="button"
               className="btn btn-primary monthly-create-trigger"
-              onClick={() => { setActivityDraft((draft) => ({ ...draft, startDate: `${activeMonthId}-01`, endDate: monthEndDate(activeMonthId), recurrenceEndDate: project.endDate })); setCreateOpen(true) }}
+              onClick={() => openActivityCreator()}
               aria-label={t.create}
               title={t.create}
             >
@@ -489,6 +504,10 @@ export function MonthlyFocusView() {
                   : ""}
               </span>
             </div>
+            {availableCategories.some((category) => category.key === "contributions" || category.key === "expenses") ? <div className="monthly-savings-entry-actions">
+              {availableCategories.some((category) => category.key === "contributions") ? <button type="button" className="btn btn-ghost" onClick={() => openActivityCreator("contributions")}><PlusIcon width={15} />{t.addContribution}</button> : null}
+              {availableCategories.some((category) => category.key === "expenses") ? <button type="button" className="btn btn-ghost" onClick={() => openActivityCreator("expenses")}><PlusIcon width={15} />{t.addExpense}</button> : null}
+            </div> : null}
             <div className="monthly-savings-fields">
               {savingsMode === "monthly-target" ? (
                 <label>

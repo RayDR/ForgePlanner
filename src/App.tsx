@@ -18,9 +18,10 @@ import { ImpersonationBanner } from './admin/ImpersonationBanner'
 import { SharedPlanLinkView } from './views/SharedPlanLinkView'
 import { useSession } from './auth/SessionProvider'
 import { AiProposalView } from './views/AiProposalView'
+import { LandingView, LegalView } from './views/LandingView'
 
 function DefaultLandingRoute() {
-  return <Navigate to="/plans" replace />
+  return <LandingView />
 }
 
 function RequireActivePlan() {
@@ -70,6 +71,8 @@ function App() {
       <Routes>
         <Route index element={<DefaultLandingRoute />} />
         <Route path="ai/plan-proposals" element={<AiProposalView />} />
+        <Route path="privacy" element={<LegalView kind="privacy" />} />
+        <Route path="terms" element={<LegalView kind="terms" />} />
         <Route element={<PublicOnly />}>
           <Route path="login" element={<LoginView />} />
           <Route path="register" element={<RegisterView />} />

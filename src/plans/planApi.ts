@@ -73,7 +73,7 @@ export const planApi = {
     return { plan: fromRemote(result.plan), created: result.created }
   },
   get: async (remoteId: string) => fromRemote((await request<{ plan: RemotePlan }>(`/${remoteId}`)).plan),
-  import: async (plans: ForgePlan[]) => (await request<{ plans: RemotePlan[] }>('/import', { method: 'POST', body: JSON.stringify({ plans: plans.map((plan) => ({ ...payload(plan), importKey: plan.id })) }) })).plans,
+  import: async (plans: ForgePlan[]) => (await request<{ plans: RemotePlan[] }>('/import', { method: 'POST', body: JSON.stringify({ plans: plans.map((plan) => ({ ...payload(plan), importKey: plan.id })) }) })).plans.map((plan) => fromRemote(plan)),
   update: async (plan: ForgePlan, expectedRevision = plan.remoteRevision ?? 1, signal?: AbortSignal) => fromRemote((await request<{ plan: RemotePlan }>(plan.remoteLinkId ? `/link/${plan.remoteLinkId}` : `/${plan.remoteId}`, { method: 'PATCH', body: JSON.stringify({ ...payload(plan), expectedRevision }), signal })).plan, plan.remoteLinkId),
   openSharedLink: async (linkId: string) => fromRemote((await request<{ plan: RemotePlan }>(`/link/${linkId}`)).plan, linkId),
   remove: async (remoteId: string, expectedRevision: number) => {

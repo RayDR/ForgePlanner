@@ -18,7 +18,20 @@ DATABASE_URL=postgresql://northstar_planner:URL_ENCODED_PASSWORD@127.0.0.1:5432/
 APP_ORIGIN=https://planner.domoforge.com
 COOKIE_SECURE=true
 TRUST_PROXY=true
+# Generate once per environment with: openssl rand -hex 32
+AI_GUEST_SESSION_SIGNING_KEY=REPLACE_WITH_A_64_CHARACTER_RANDOM_HEX_VALUE
+AI_PROVIDER=mock
+# Only required when AI_PROVIDER=openai; never expose it through VITE_*.
+OPENAI_API_KEY=
+OPENAI_PROPOSAL_MODEL=gpt-5.6-sol
+OPENAI_TIMEOUT_MS=20000
 ```
+
+`AI_GUEST_SESSION_SIGNING_KEY` signs the short-lived guest AI session and
+proposal envelopes. It is required when `NODE_ENV=production`; the API now
+fails startup rather than silently disabling the guest proposal workflow. Do
+not reuse `EMAIL_ENCRYPTION_KEY`, print either value, or commit the runtime env
+file.
 
 3. Apply migrations and seed RBAC:
 

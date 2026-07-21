@@ -35,6 +35,7 @@ interface ForgePlannerStore extends ForgePlannerState {
   ensureInitialized: (createDefaults?: boolean) => void
   openPlan: (planId: string) => void
   createPlan: (draft: PlanDraftInput) => string
+  addLocalPlan: (plan: ForgePlan) => void
   retainFailedCreate: (plan: ForgePlan, metadata: PlanSyncMetadata) => void
   acceptServerPlan: (plan: ForgePlan, replacedPlanId?: string) => void
   setPlanSync: (planId: string, metadata: PlanSyncMetadata) => void
@@ -209,6 +210,7 @@ export const useForgePlannerStore = create<ForgePlannerStore>()(
         useRoadmapStore.getState().loadSnapshot(plan.snapshot)
         return plan.id
       },
+      addLocalPlan: (plan) => { set((state) => ({ plans: [plan, ...state.plans.filter((item) => item.id !== plan.id)], activePlanId: plan.id, syncByPlanId: { ...state.syncByPlanId, [plan.id]: { state: 'local' } } })); useRoadmapStore.getState().loadSnapshot(plan.snapshot) },
       retainFailedCreate: (plan, metadata) => set((state) => ({ plans: [plan, ...state.plans.filter((item) => item.id !== plan.id)], syncByPlanId: { ...state.syncByPlanId, [plan.id]: metadata } })),
       acceptServerPlan: (plan, replacedPlanId) => set((state) => {
         const replacedIds = new Set([plan.id, plan.remoteId, replacedPlanId].filter((value): value is string => Boolean(value)))

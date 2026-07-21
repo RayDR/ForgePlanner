@@ -29,6 +29,21 @@ const schema = z.object({
   SMTP_FROM_NAME: z.string().default('NorthStar Planner'),
   EMAIL_ENCRYPTION_KEY: z.string().optional(),
   AI_GUEST_SESSION_SIGNING_KEY: z.string().min(32).optional(),
+  AI_PROVIDER: z.enum(['mock', 'openai']).default('mock'),
+  OPENAI_API_KEY: z.string().min(20).optional(),
+  OPENAI_PROPOSAL_MODEL: z.string().min(1).default('gpt-5.6-sol'),
+  OPENAI_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(120_000).default(20_000),
+}).superRefine((value, context) => {
+  if (value.NODE_ENV === 'production' && !value.AI_GUEST_SESSION_SIGNING_KEY) {
+    context.addIssue({
+      code: 'custom',
+      path: ['AI_GUEST_SESSION_SIGNING_KEY'],
+      message: 'AI_GUEST_SESSION_SIGNING_KEY is required in production.',
+    })
+  }
+  if (value.AI_PROVIDER === 'openai' && !value.OPENAI_API_KEY) {
+    context.addIssue({ code: 'custom', path: ['OPENAI_API_KEY'], message: 'OPENAI_API_KEY is required when AI_PROVIDER=openai.' })
+  }
 })
 
 export type AppEnv = z.infer<typeof schema>

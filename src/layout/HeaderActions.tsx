@@ -3,6 +3,7 @@ import { AccountMenu } from '../account/AccountMenu'
 import { NotificationCenter } from '../notifications/NotificationCenter'
 import { CollaborationLauncher } from '../plans/CollaborationLauncher'
 import { LocaleThemeControls } from '../ui/LocaleThemeControls'
+import { useSession } from '../auth/SessionProvider'
 
 interface HeaderActionsProps {
   locale: Locale
@@ -16,9 +17,9 @@ interface HeaderActionsProps {
 }
 
 export function HeaderActions(props: HeaderActionsProps) {
+  const { session } = useSession()
   return <div className="header-account-controls" aria-label={props.locale === 'es' ? 'Acciones globales' : 'Global actions'}>
-    <div className="header-action-group header-action-group--collaboration"><NotificationCenter /><CollaborationLauncher /></div>
-    <span className="header-action-divider" aria-hidden="true" />
+    {session ? <><div className="header-action-group header-action-group--collaboration"><NotificationCenter /><CollaborationLauncher /></div><span className="header-action-divider" aria-hidden="true" /></> : null}
     <AccountMenu />
     <span className="header-action-divider" aria-hidden="true" />
     <LocaleThemeControls {...props} />

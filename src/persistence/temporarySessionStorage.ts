@@ -6,7 +6,7 @@ export interface TemporarySessionEnvelope<T> {
 }
 
 const TEMPORARY_STATE_KEY = 'temporary-planner-state'
-export type TemporarySessionNamespace = 'plans' | 'ai-proposals'
+export type TemporarySessionNamespace = 'plans' | 'ai-proposals' | 'ai-conversation'
 
 function temporaryKey(namespace?: TemporarySessionNamespace) { return namespace ? `${TEMPORARY_STATE_KEY}:${namespace}` : TEMPORARY_STATE_KEY }
 

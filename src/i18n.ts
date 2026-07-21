@@ -2,7 +2,7 @@ export type Locale = 'en' | 'es'
 
 export const copy = {
   en: {
-    appName: 'Forge Planner',
+    appName: 'ForgePlanner',
     yourPlans: 'Your plans',
     createPlan: 'Create plan',
     createPlanShort: 'Create plan',
@@ -65,7 +65,7 @@ export const copy = {
     modalCreateTitle: 'Create plan',
     modalEditTitle: 'Edit plan',
     menu: 'More actions',
-    logo: 'Forge Planner',
+    logo: 'ForgePlanner',
     backToPlans: 'Back to plans',
     planWindowLabel: 'Plan window',
     totalProgress: 'Total progress',
@@ -134,7 +134,7 @@ export const copy = {
     loadMore: 'Load more',
   },
   es: {
-    appName: 'Forge Planner',
+    appName: 'ForgePlanner',
     yourPlans: 'Tus planes',
     createPlan: 'Crear plan',
     createPlanShort: 'Crear plan',
@@ -197,7 +197,7 @@ export const copy = {
     modalCreateTitle: 'Crear plan',
     modalEditTitle: 'Editar plan',
     menu: 'Más acciones',
-    logo: 'Forge Planner',
+    logo: 'ForgePlanner',
     backToPlans: 'Volver a planes',
     planWindowLabel: 'Ventana del plan',
     totalProgress: 'Progreso total',
