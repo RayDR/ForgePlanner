@@ -40,6 +40,45 @@ enum PlanVersionSource {
   AI_PATCH
 }
 
+enum AiOperationStatus {
+  DRAFT
+  PENDING
+  PROPOSED
+  REFINING
+  READY_FOR_CONVERSION
+  REJECTED
+  FAILED
+  EXPIRED
+}
+
+enum AiDetectedLanguage {
+  EN
+  ES
+  MIXED
+  UNKNOWN
+}
+
+enum AiProposalLanguage {
+  EN
+  ES
+}
+
+enum AiProposalRevisionSource {
+  INITIAL_GENERATION
+  REFINEMENT
+}
+
+enum AiOperationRequestType {
+  GENERATION
+  REFINEMENT
+}
+
+enum AiOperationRequestStatus {
+  RESERVED
+  SUCCEEDED
+  FAILED
+}
+
 model User {
   id                      String                    @id @default(uuid()) @db.Uuid
   email                   String                    @unique @db.VarChar(320)
@@ -69,9 +108,98 @@ model User {
   effectiveAuditLogs      AuditLog[]                @relation("AuditEffective")
   actorPlanVersions       PlanVersion[]             @relation("PlanVersionActor")
   effectivePlanVersions   PlanVersion[]             @relation("PlanVersionEffective")
+  aiOperations            AiOperation[]             @relation("AiOperationOwner")
+  aiOperationRequests     AiOperationRequest[]      @relation("AiOperationRequestOwner")
   impersonationsStarted   ImpersonationSession[]    @relation("ImpersonationAdmin")
   impersonationsReceived  ImpersonationSession[]    @relation("ImpersonationTarget")
   externalIdentities      ExternalIdentity[]
+}
+
+model AiOperation {
+  id                        String               @id @default(uuid()) @db.Uuid
+  ownerUserId               String               @map("owner_user_id") @db.Uuid
+  type                      String               @default("PLAN_PROPOSAL") @db.VarChar(40)
+  title                     String?              @db.VarChar(160)
+  status                    AiOperationStatus
+  selectedLanguage          AiProposalLanguage   @map("selected_language")
+  detectedLanguage          AiDetectedLanguage   @map("detected_language")
+  provider                  String               @db.VarChar(40)
+  model                     String               @db.VarChar(80)
+  promptTemplateVersion     String               @map("prompt_template_version") @db.VarChar(40)
+  sanitizedInputMetadata    Json                 @map("sanitized_input_metadata")
+  refinementCount           Int                  @default(0) @map("refinement_count")
+  requestFingerprint        String               @map("request_fingerprint") @db.Char(64)
+  generationClientRequestId String               @map("generation_client_request_id") @db.Uuid
+  currentProposalRevisionId String?              @map("current_proposal_revision_id") @db.Uuid
+  readyProposalRevisionId   String?              @map("ready_proposal_revision_id") @db.Uuid
+  processingRequestId       String?              @map("processing_request_id") @db.Uuid
+  processingLeaseExpiresAt  DateTime?            @map("processing_lease_expires_at")
+  expiresAt                 DateTime             @map("expires_at")
+  purgeAfter                DateTime?            @map("purge_after")
+  acceptedAt                DateTime?            @map("accepted_at")
+  rejectedAt                DateTime?            @map("rejected_at")
+  failedAt                  DateTime?            @map("failed_at")
+  errorCode                 String?              @map("error_code") @db.VarChar(80)
+  createdAt                 DateTime             @default(now()) @map("created_at")
+  updatedAt                 DateTime             @updatedAt @map("updated_at")
+  owner                     User                 @relation("AiOperationOwner", fields: [ownerUserId], references: [id], onDelete: Cascade)
+  revisions                 AiProposalRevision[] @relation("AiOperationRevisions")
+  currentProposalRevision   AiProposalRevision?  @relation("AiOperationCurrentRevision", fields: [currentProposalRevisionId], references: [id], onDelete: SetNull)
+  readyProposalRevision     AiProposalRevision?  @relation("AiOperationReadyRevision", fields: [readyProposalRevisionId], references: [id], onDelete: SetNull)
+  requests                  AiOperationRequest[]
+
+  @@unique([ownerUserId, generationClientRequestId])
+  @@index([ownerUserId, createdAt(sort: Desc)])
+  @@index([ownerUserId, status, updatedAt(sort: Desc)])
+  @@index([status, expiresAt])
+  @@index([processingLeaseExpiresAt])
+}
+
+model AiProposalRevision {
+  id                  String                   @id @default(uuid()) @db.Uuid
+  aiOperationId       String                   @map("ai_operation_id") @db.Uuid
+  revision            Int
+  parentRevisionId    String?                  @map("parent_revision_id") @db.Uuid
+  content             Json
+  contentLanguage     AiProposalLanguage       @map("content_language")
+  source              AiProposalRevisionSource
+  providerRequestId   String?                  @map("provider_request_id") @db.VarChar(120)
+  inputTokenCount     Int?                     @map("input_token_count")
+  outputTokenCount    Int?                     @map("output_token_count")
+  estimatedCostMicros BigInt?                  @map("estimated_cost_micros")
+  checksum            String                   @db.Char(64)
+  contentSizeBytes    Int                      @map("content_size_bytes")
+  createdAt           DateTime                 @default(now()) @map("created_at")
+  operation           AiOperation              @relation("AiOperationRevisions", fields: [aiOperationId], references: [id], onDelete: Cascade)
+  parentRevision      AiProposalRevision?      @relation("AiProposalRevisionLineage", fields: [parentRevisionId], references: [id], onDelete: SetNull)
+  childRevisions      AiProposalRevision[]     @relation("AiProposalRevisionLineage")
+  currentFor          AiOperation[]            @relation("AiOperationCurrentRevision")
+  readyFor            AiOperation[]            @relation("AiOperationReadyRevision")
+
+  @@unique([aiOperationId, revision])
+  @@index([aiOperationId, createdAt(sort: Desc)])
+}
+
+model AiOperationRequest {
+  id                 String                   @id @default(uuid()) @db.Uuid
+  ownerUserId        String                   @map("owner_user_id") @db.Uuid
+  aiOperationId      String                   @map("ai_operation_id") @db.Uuid
+  type               AiOperationRequestType
+  clientRequestId    String                   @map("client_request_id") @db.Uuid
+  requestFingerprint String                   @map("request_fingerprint") @db.Char(64)
+  expectedRevision   Int?                     @map("expected_revision")
+  status             AiOperationRequestStatus
+  resultRevision     Int?                     @map("result_revision")
+  safeErrorCode      String?                  @map("safe_error_code") @db.VarChar(80)
+  leaseExpiresAt     DateTime                 @map("lease_expires_at")
+  completedAt        DateTime?                @map("completed_at")
+  createdAt          DateTime                 @default(now()) @map("created_at")
+  owner              User                     @relation("AiOperationRequestOwner", fields: [ownerUserId], references: [id], onDelete: Cascade)
+  operation          AiOperation              @relation(fields: [aiOperationId], references: [id], onDelete: Cascade)
+
+  @@unique([aiOperationId, type, clientRequestId])
+  @@index([ownerUserId, type, clientRequestId])
+  @@index([status, leaseExpiresAt])
 }
 
 model ExternalIdentity {

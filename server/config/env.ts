@@ -28,6 +28,7 @@ const schema = z.object({
   SMTP_FROM: z.string().email().optional(),
   SMTP_FROM_NAME: z.string().default('NorthStar Planner'),
   EMAIL_ENCRYPTION_KEY: z.string().optional(),
+  AI_GUEST_SESSION_SIGNING_KEY: z.string().min(32).optional(),
 })
 
 export type AppEnv = z.infer<typeof schema>

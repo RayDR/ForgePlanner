@@ -21,7 +21,8 @@
     "smtp:import": "tsx scripts/import-smtp-config.ts",
     "plans:purge-trash": "tsx server/commands/purge-plan-trash.ts",
     "plans:backfill-versions": "tsx server/commands/backfill-plan-versions.ts",
-    "plans:verify-versions": "tsx server/commands/verify-plan-versions.ts"
+    "plans:verify-versions": "tsx server/commands/verify-plan-versions.ts",
+    "ai:expire-proposals": "tsx server/commands/expire-ai-proposals.ts"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"

@@ -210,6 +210,7 @@ Expected response:
 
 - [Canonical plan contract](docs/plan-contract.md)
 - [Server-backed plan trash and purge](docs/plan-trash.md)
+- [AI proposal engine, Stage 6](docs/ai-proposal-stage6.md)
 
 ## Remaining roadmap
 

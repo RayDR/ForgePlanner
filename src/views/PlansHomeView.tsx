@@ -562,7 +562,7 @@ export function PlansHomeView() {
                 <h1>{t.yourPlans}</h1>
               </div>
             </div>
-            <HeaderActions
+            <div className="plans-header-actions"><button type="button" className="btn btn-primary" onClick={() => navigate('/ai/plan-proposals')}>{locale === 'es' ? 'Planear con IA' : 'Plan with AI'}</button><HeaderActions
               locale={locale}
               theme={theme}
               onToggleLocale={() => { const next = locale === 'es' ? 'en' : 'es'; setLocale(next); void setAppearance({ locale: next }) }}
@@ -571,7 +571,7 @@ export function PlansHomeView() {
               switchToSpanishLabel={t.languageSwitchToSpanish}
               switchToDarkLabel={t.switchToDarkMode}
               switchToLightLabel={t.switchToLightMode}
-            />
+            /></div>
           </div>
         </header>
 

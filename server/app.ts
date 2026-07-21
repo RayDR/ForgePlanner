@@ -17,6 +17,7 @@ import { adminEmailRoutes } from './modules/admin/admin-email.routes.js'
 import { adminTemplateRoutes } from './modules/admin/admin-template.routes.js'
 import { notificationRoutes } from './modules/notifications/notification.routes.js'
 import { collaborationRoutes } from './modules/collaboration/collaboration.routes.js'
+import { aiProposalRoutes } from './modules/ai/ai.routes.js'
 
 export function createApp(db: PrismaClient, env: AppEnv) {
   const app = express()
@@ -37,6 +38,7 @@ export function createApp(db: PrismaClient, env: AppEnv) {
   app.use('/api/notifications', notificationRoutes(db))
   app.use('/api/collaboration', collaborationRoutes(db))
   app.use('/api/profiles', profileSearchRoutes(db))
+  app.use('/api/ai', aiProposalRoutes(db, env))
   app.use('/api/plans', sharingRoutes(db))
   app.use('/api/plans', planRoutes(db))
   app.use((_request, response) => response.status(404).json({ error: { code: 'NOT_FOUND', message: 'Endpoint not found.' } }))
