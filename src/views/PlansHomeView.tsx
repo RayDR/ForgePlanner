@@ -36,6 +36,7 @@ import {
   ShareIcon,
 } from '../ui/icons'
 import { HeaderActions } from '../layout/HeaderActions'
+import { getEligibleLocalPlans } from '../persistence/localPlanScope'
 
 type PlansFilter = 'active' | 'archived' | 'deleted'
 
@@ -244,6 +245,7 @@ export function PlansHomeView() {
   const [confirmClearDeleted, setConfirmClearDeleted] = useState(false)
   const [createSaving, setCreateSaving] = useState(false)
   const [createError, setCreateError] = useState('')
+  const [savingLocalId, setSavingLocalId] = useState<string | null>(null)
   const createRequestRef = useRef<AbortController | null>(null)
 
   const t = copy[locale]
@@ -404,6 +406,25 @@ export function PlansHomeView() {
     } catch (reason) {
       if (!controller.signal.aborted && isCurrentScope(scope, generation)) setPlanSync(plan.id, failedSyncMetadata(reason, metadata.clientMutationId))
     } finally { if (createRequestRef.current === controller) createRequestRef.current = null }
+  }
+
+  async function saveLocalPlan(plan: ForgePlan) {
+    if (plan.remoteId || savingLocalId === plan.id) return
+    if (!session) {
+      navigate('/login', { state: { from: '/plans', localPlanId: plan.id } })
+      return
+    }
+    const scope = getIdentityScope(); const generation = getScopeGeneration()
+    if (!scope) return
+    const clientMutationId = syncByPlanId[plan.id]?.clientMutationId ?? crypto.randomUUID()
+    setSavingLocalId(plan.id); setPlanSync(plan.id, { state: 'saving', clientMutationId })
+    try {
+      const result = await planApi.create(plan, clientMutationId)
+      if (!isCurrentScope(scope, generation)) return
+      acceptServerPlan(result.plan, plan.id)
+    } catch (reason) {
+      if (isCurrentScope(scope, generation)) setPlanSync(plan.id, { state: 'failed', clientMutationId, error: { code: reason instanceof PlanRequestError ? reason.code : 'PLAN_SYNC_FAILED', message: reason instanceof Error ? reason.message : String(reason) } })
+    } finally { if (isCurrentScope(scope, generation)) setSavingLocalId(null) }
   }
 
   function handleSaveQuickEdit() {
@@ -634,6 +655,7 @@ export function PlansHomeView() {
                             {plan.remoteAccess === 'owner' && plan.remoteId ? <button type="button" onClick={() => { void togglePlanSharing(plan); closeMenu() }}><LockIcon width={16} height={16} /> {plan.remoteSharingEnabled === false ? t.unlockAccess : t.makePrivate}</button> : null}
                             <button type="button" onClick={() => { duplicatePlan(plan.id); closeMenu() }}><CopyIcon width={16} height={16} /> {t.duplicate}</button>
                             {plan.remoteAccess === 'owner' || !plan.remoteAccess ? <button type="button" onClick={() => { void handleArchivePlan(plan); closeMenu() }}><ArchiveIcon width={16} height={16} /> {t.archive}</button> : null}
+                            {!plan.remoteId && getEligibleLocalPlans([plan], syncByPlanId).length > 0 ? <button type="button" disabled={savingLocalId === plan.id} onClick={() => { void saveLocalPlan(plan); closeMenu() }}>{savingLocalId === plan.id ? (locale === 'es' ? 'Guardando…' : 'Saving…') : (locale === 'es' ? 'Guardar en mi cuenta' : 'Save to my account')}</button> : null}
                             <button type="button" onClick={() => { handleExportPlan(plan); closeMenu() }}><DownloadIcon width={16} height={16} /> {t.export}</button>
                             {plan.remoteAccess === 'owner' || !plan.remoteAccess ? <button type="button" className="danger" disabled={sync?.state === 'deleting'} onClick={() => { void handleDeletePlan(plan); closeMenu() }}><TrashIcon width={16} height={16} /> {t.delete}</button> : null}
                           </div>

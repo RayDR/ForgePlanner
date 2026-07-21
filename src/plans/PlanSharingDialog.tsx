@@ -5,6 +5,7 @@ import type { ForgePlan } from '../types/forgePlanner'
 import { LockIcon, ShareIcon, UsersIcon } from '../ui/icons'
 import { sharingApi } from './sharingApi'
 import type { PlanAccessRecord, PlanShareLink, PublicProfile } from './sharingApi'
+import { ModalPortal } from '../ui/Modal'
 
 export function PlanSharingDialog({ plan, locale, onClose }: { plan: ForgePlan; locale: Locale; onClose: () => void }) {
   const t = sharingCopy[locale]
@@ -30,7 +31,7 @@ export function PlanSharingDialog({ plan, locale, onClose }: { plan: ForgePlan; 
   async function removeLink() { if (!plan.remoteId) return; await sharingApi.deleteLink(plan.remoteId); setLink(null) }
   async function copyLink() { if (!link) return; await navigator.clipboard.writeText(`${window.location.origin}/shared/${link.id}`); setNotice(t.copied); window.setTimeout(() => setNotice(''), 1800) }
 
-  return <div className="modal-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
+  return <ModalPortal><div className="modal-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
     <section className="modal-shell plan-sharing-dialog" role="dialog" aria-modal="true" aria-labelledby="sharing-title">
       <header className="modal-header sharing-dialog-header"><div className="sharing-dialog-title-icon"><ShareIcon width={22} /></div><div><small>{plan.title}</small><h2 id="sharing-title">{t.title}</h2></div><button type="button" className="btn btn-ghost" onClick={onClose} aria-label={t.close}>×</button></header>
       <div className="modal-body stack-sm">
@@ -50,5 +51,5 @@ export function PlanSharingDialog({ plan, locale, onClose }: { plan: ForgePlan; 
         <div className="sharing-access-list"><h3><UsersIcon width={20} /> {t.people}</h3>{access.length ? access.filter((item) => item.status !== 'revoked').map((item) => <div className="sharing-access-row" key={item.id}><div className="sharing-avatar" aria-hidden="true">{item.profile?.displayName.slice(0, 1).toUpperCase() ?? '?'}</div><div><strong>{item.profile?.displayName ?? t.unavailable}</strong><small>{item.profile?.code} · {item.status === 'pending' ? t.pending : item.status === 'accepted' ? t.accepted : t.declined}</small></div><select className="field-input" disabled={!sharingEnabled} value={item.accessLevel} onChange={(event) => void change(item.id, event.target.value as 'viewer' | 'editor')}><option value="viewer">{t.view}</option><option value="editor">{t.edit}</option></select><button className="btn btn-danger" disabled={!sharingEnabled} type="button" onClick={() => void revoke(item.id)}>{t.revoke}</button></div>) : <p>{t.noPeople}</p>}</div>
       </div>
     </section>
-  </div>
+  </div></ModalPortal>
 }

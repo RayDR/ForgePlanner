@@ -5,6 +5,7 @@ import { useRoadmapStore } from '../hooks/useRoadmapStore'
 import { getIdentityScope, getScopeGeneration, isCurrentScope } from '../persistence/identityScope'
 import { copy, type Locale } from '../i18n'
 import { planApi, type PlanVersionDetail, type PlanVersionMetadata, type PlanVersionSource } from './planApi'
+import { ModalPortal } from '../ui/Modal'
 
 const sourceKey: Record<PlanVersionSource, keyof typeof copy.en> = {
   USER: 'versionSourceUser', IMPORT: 'versionSourceImport', MIGRATION: 'versionSourceMigration', SYSTEM: 'versionSourceSystem', TRASH_DELETE: 'versionSourceTrashDelete', TRASH_RESTORE: 'versionSourceTrashRestore', VERSION_RESTORE: 'versionSourceRestore', AI_GENERATION: 'versionSourceAiGeneration', AI_REFINEMENT: 'versionSourceAiRefinement', AI_PATCH: 'versionSourceAiPatch',
@@ -63,7 +64,7 @@ export function PlanVersionHistory({ plan, locale, onClose }: { plan: ForgePlan;
     finally { if (isCurrentScope(scope, generation)) setRestoring(false) }
   }
 
-  return <div className="modal-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
+  return <ModalPortal><div className="modal-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
     <section className="modal-shell plan-history-modal" role="dialog" aria-modal="true" aria-labelledby="plan-history-title">
       <header className="modal-header"><div><h2 id="plan-history-title">{t.versionHistory}</h2><p>{t.versionHistoryDescription}</p></div><button type="button" className="btn btn-ghost" onClick={onClose} aria-label={t.cancel}>×</button></header>
       <div className="plan-history-layout">
@@ -72,5 +73,5 @@ export function PlanVersionHistory({ plan, locale, onClose }: { plan: ForgePlan;
       </div>
       {versions.length < total ? <footer className="modal-footer"><button type="button" className="btn" disabled={loading} onClick={() => void loadMore()}>{t.loadMore}</button></footer> : null}
     </section>
-  </div>
+  </div></ModalPortal>
 }

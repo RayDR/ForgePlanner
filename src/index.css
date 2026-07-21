@@ -1390,6 +1390,10 @@ select:focus-visible {
 .local-plan-migration > div:first-child { display: grid; gap: 4px; }
 .local-plan-migration > div:last-child { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; justify-content: flex-end; }
 .local-plan-migration p { color: var(--color-text-muted); font-size: 13px; }
+.local-plan-migration__items { display: grid; gap: 6px; margin-top: 8px; }
+.local-plan-migration__item { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.local-plan-migration__item > span:nth-child(2) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.local-plan-migration__item .btn { margin-left: auto; padding: 5px 10px; font-size: 12px; }
 .plan-conflict { display: grid; gap: 10px; margin-top: 10px; border-top: 1px solid var(--color-border); padding-top: 10px; }
 .plan-conflict > div { display: flex; flex-wrap: wrap; gap: 8px; }
 @media (max-width: 700px) { .local-plan-migration { align-items: stretch; flex-direction: column; } .local-plan-migration > div:last-child { justify-content: stretch; } .local-plan-migration .btn { flex: 1; } }
@@ -2089,11 +2093,11 @@ select:focus-visible {
 .modal-overlay {
   position: fixed;
   inset: 0;
+  z-index: 1000;
   background: var(--color-overlay);
   padding: 16px;
   display: grid;
   place-items: center;
-  z-index: 50;
 }
 
 .modal-shell {

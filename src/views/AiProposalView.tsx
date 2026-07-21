@@ -18,7 +18,7 @@ export function AiProposalView() {
     // Clear identity-owned proposal data before reading the next scope. This
     // prevents a previous user's proposal briefly flashing during hydration.
     queueMicrotask(() => {
-      if (!isCurrentScope(scope, generation)) return
+      if (!scope || !isCurrentScope(scope, generation)) return
       setCurrent(null); setOperations([]); setInstruction(''); setError(''); setBusy(false)
     })
     if (!scope) return () => controller.abort()

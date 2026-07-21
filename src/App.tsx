@@ -34,6 +34,7 @@ function PlanRouteBootstrap() {
   const openPlan = useForgePlannerStore((state) => state.openPlan)
   const getPlanById = useForgePlannerStore((state) => state.getPlanById)
   const activePlanId = useForgePlannerStore((state) => state.activePlanId)
+  const { session } = useSession()
 
   useEffect(() => {
     if (!planId) {
@@ -42,7 +43,7 @@ function PlanRouteBootstrap() {
     }
 
     const plan = getPlanById(planId)
-    if (!plan) {
+    if (!plan || (!session && plan.remoteId)) {
       navigate('/plans', { replace: true })
       return
     }
@@ -50,7 +51,7 @@ function PlanRouteBootstrap() {
     if (activePlanId !== planId) {
       openPlan(planId)
     }
-  }, [activePlanId, planId, navigate, openPlan, getPlanById])
+  }, [activePlanId, planId, navigate, openPlan, getPlanById, session])
 
   return <Outlet />
 }
@@ -76,25 +77,28 @@ function App() {
           <Route path="reset-password" element={<ResetPasswordView />} />
           <Route path="verify-email" element={<VerifyEmailView />} />
         </Route>
+        {/* Local planner routes are public; PlanRouteBootstrap only opens plans
+            present in the identity-scoped client store. Server-backed APIs and
+            account features remain protected below. */}
+        <Route path="plans" element={<PlansHomeView />} />
+        <Route path="plans/:planId" element={<PlanRouteBootstrap />}>
+          <Route element={<RequireActivePlan />}>
+            <Route element={<AppShell />}>
+              <Route path="roadmap" element={<AnnualRoadmapView />} />
+              <Route path="monthly">
+                <Route index element={<MonthlyFocusView />} />
+                <Route path=":monthId" element={<MonthlyFocusView />} />
+              </Route>
+              <Route path="planner" element={<Navigate to="../roadmap" replace />} />
+            </Route>
+          </Route>
+        </Route>
         <Route element={<RequireSession />}>
           <Route path="shared/:linkId" element={<SharedPlanLinkView />} />
           <Route path="account" element={<AccountView />} />
           <Route path="collaboration" element={<Navigate to="/plans" replace />} />
           <Route element={<RequirePermission permission="user.read" />}>
             <Route path="admin" element={<AdminView />} />
-          </Route>
-          <Route path="plans" element={<PlansHomeView />} />
-          <Route path="plans/:planId" element={<PlanRouteBootstrap />}>
-            <Route element={<RequireActivePlan />}>
-              <Route element={<AppShell />}>
-                <Route path="roadmap" element={<AnnualRoadmapView />} />
-                <Route path="monthly">
-                  <Route index element={<MonthlyFocusView />} />
-                  <Route path=":monthId" element={<MonthlyFocusView />} />
-                </Route>
-                <Route path="planner" element={<Navigate to="../roadmap" replace />} />
-              </Route>
-            </Route>
           </Route>
         </Route>
         <Route path="*" element={<Navigate to="/plans" replace />} />
