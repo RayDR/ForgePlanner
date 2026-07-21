@@ -1,133 +1,219 @@
-# Project NorthStar Planner
+# NorthStar Planner
 
-Visual MVP for a long-range personal goal planner focused on life projects rather than work task management.
+NorthStar Planner is a React/Vite planner backed by a modular Node/Express API. PostgreSQL stores users, sessions, authorization, ownership and audit records; each plan remains a portable JSON snapshot stored as JSONB. Existing Zustand/localStorage plans are preserved until the user explicitly downloads a backup and imports them.
 
-## Purpose
+## Stack and structure
 
-This prototype validates the core UX for a planner that helps one person organize a multi-month or multi-year goal such as:
+- React 19, TypeScript, Vite and React Router
+- Zustand for planner state and the existing local persistence contract
+- Express, Zod and structured Pino logging
+- PostgreSQL with Prisma and versioned migrations
+- `src/`: planner, authentication and administration UI
+- `server/`: API modules, authorization, email and security services
+- `prisma/`: schema, migrations and idempotent RBAC/admin seed
+- `config/`: safe configuration examples; completed secret files must not be committed
+- `deploy/`: Nginx and service deployment configuration
+- `docs/`: architecture and production activation details
 
-- immigration planning
-- savings goals
-- career transitions
-- AI / LLM study plans
-- certifications
-- portfolio building
-- personal project execution
+## Implemented multiuser features
 
-The initial scenario included here is **Project NorthStar**, a 24-month roadmap from August 2026 to July 2028 for preparing an Express Entry path to Canada while strengthening AI, cloud, and backend capabilities.
+### Authentication and profile
 
-## MVP scope
+- registration, login, current session, logout and logout-all
+- Argon2id password hashes and opaque server-side sessions
+- Google OAuth and score-based reCAPTCHA integration points
+- public profile code in `handle#1234` format
+- editable public profile with display name, handle, biography, avatar URL, timezone and search visibility
+- language and theme preferences persisted in the authenticated profile
+- persisted language and theme preferences
+- protected public/authenticated/administrative routes
+- password recovery with hashed, expiring, single-use tokens
+- previous sessions are revoked after a successful password reset
+- hashed, expiring and single-use email verification links with generic resend responses
+- optional registration enforcement through `EMAIL_VERIFICATION_REQUIRED`; Google identities are verified automatically
+- account session/device listing, current-session identification and individual revocation
+- masked IP display and throttled last-activity updates
 
-- NorthStar Dashboard with plan metrics and yearly highlights
-- Annual roadmap with 12 monthly cards per year
-- Year switching for multi-year plans
-- Monthly focus kanban grouped by status
-- Drag and drop between months and status lanes
-- Activity modal for editing title, dates, description, comments, subtasks, progress, and status
-- Planner form that projects new activities into all covered months
-- Local persistence with Zustand + localStorage
-- Mock data only, no backend
+### Plans and migration
 
-## Stack
+- PostgreSQL ownership with complete JSONB snapshots
+- CRUD policies based on the authenticated session, never a client-provided owner ID
+- server-first authenticated creation using an owner-scoped `clientMutationId`
+- first-successful-request-wins create retries: the same owner and mutation ID return the original plan with `created: false`, without changing its payload, revision or audit history
+- explicit, idempotent local plan import using `importKey`
+- downloadable JSON backup before migration
+- local data is not automatically deleted after importing
+- owner, editor and viewer access levels
+- exact public-code search without exposing email addresses
+- invitation acceptance, rejection, permission changes and revocation
+- archived-plan privacy that suspends collaborator access without deleting the access list
+- explicit, confirmed permanent deletion with an immutable audit event
+- backend-enforced viewer read-only access
+- per-plan revisions with atomic optimistic-concurrency checks
+- immutable, linear plan-version history with restore-as-new-revision ([operations and invariants](docs/plan-version-history.md))
+- bilingual conflict resolution that can load the remote version or intentionally keep local changes
 
-- React
-- TypeScript
-- Vite
-- Tailwind CSS
-- React Router
-- Zustand
-- dnd-kit
+### Administration and audit
 
-## Run locally
+- protected `/admin` user and audit interface
+- user search, status changes and role management
+- protection against self-demotion and disabling the last active administrator
+- active sessions revoked when an account is suspended or disabled
+- one-hour, non-chainable impersonation with a required reason
+- persistent impersonation banner and explicit termination control
+- separate `actorUserId` and `effectiveUserId` audit identities
+- target-user permissions are applied during impersonation
+- sensitive administrative operations are blocked while impersonating
+
+### Notifications
+
+- in-app notification inbox and unread counter in the shared header
+- translated plan invitation, acceptance and rejection notifications
+- individual and bulk read state
+- per-user preferences for invitations, responses and future email delivery
+
+### Collaboration
+
+- organizations with owner, administrator and member roles
+- organization membership through exact public profile codes
+- private direct conversations between authenticated users
+- persisted message history with participant-level authorization
+
+### SMTP and email security
+
+- provider abstraction with SMTP implementation
+- database configuration with environment fallback
+- SMTP password encrypted using AES-256-GCM
+- the master key exists only in the local ignored environment file
+- the API returns `passwordConfigured`, never plaintext or ciphertext
+- administrative SMTP editor and test-delivery action
+- delivery logs contain only a recipient hash
+- password reset HTML and plain-text defaults stored outside application code
+- editable, versioned database overrides with safe-tag validation, preview and default restoration
+
+SMTP is intentionally disabled when credentials fail verification. A stale or rejected password is removed rather than retained. Replace it through `Administration → Email`, test delivery, and only then enable it.
+
+## Local development
+
+Requirements: Node.js 22+ and PostgreSQL 15+.
 
 ```bash
+cp .env.example .env
 npm install
-npm run dev
+npm run prisma:generate
+npm run prisma:migrate
+npm run db:seed
+npm run dev:all
 ```
 
-Production build:
+The client runs at `http://localhost:5173`; Vite proxies `/api` to `http://127.0.0.1:4100`.
+
+The PostgreSQL plan integration suite must use a dedicated test database whose
+name or schema contains `test`. It refuses to reuse `DATABASE_URL`:
 
 ```bash
+TEST_DATABASE_URL="postgresql://user:password@127.0.0.1:5432/northstar_planner_test?schema=public" npm run test:integration
+```
+
+## Initial administrator
+
+There is no default password. Set `ADMIN_EMAIL`, `ADMIN_PASSWORD` (12+ characters) and optionally `ADMIN_DISPLAY_NAME`, then run:
+
+```bash
+npm run db:seed
+```
+
+The seed is idempotent. It creates a missing administrator or grants the `admin` and `user` roles to an existing account without changing its password.
+
+To promote an existing production account using the local runtime environment:
+
+```bash
+set -a
+source api.env.local
+set +a
+ADMIN_EMAIL="admin@example.com" npm run db:seed
+```
+
+## SMTP configuration
+
+Generate the encryption key once and keep it outside Git:
+
+```bash
+openssl rand -base64 32
+```
+
+Store it as `EMAIL_ENCRYPTION_KEY` in the protected runtime environment. `api.env.local` is ignored by Git and must use mode `0600`.
+
+A safe template is available at [`config/email-settings.example.json`](config/email-settings.example.json). An existing environment configuration can be imported without printing its values:
+
+```bash
+npm run smtp:import -- /secure/path/source.env api.env.local
+```
+
+The importer creates the master key when absent, encrypts the SMTP password before PostgreSQL persistence and never copies plaintext into tracked files.
+
+## API overview
+
+- `/api/auth/*`: registration, sessions, OAuth and password recovery
+- `/api/auth/email-verification/*`: verification-link request and confirmation
+- `/api/profile`, `/api/profiles/search`: profile preferences and public lookup
+- `/api/plans/*`: ownership, JSONB persistence, import and sharing
+- `/api/admin/users/*`: protected user administration
+- `/api/admin/impersonation`: start/end impersonation
+- `/api/admin/audit-logs`: protected audit query
+- `/api/admin/settings/email`: SMTP configuration and delivery test
+
+See [`docs/multiuser-architecture.md`](docs/multiuser-architecture.md) for the endpoint list and authorization model.
+
+Plan sharing supports a master access lock that preserves the collaborator list and general link. Owners can grant view or edit access per person, create an authenticated general link with view or edit permission, disable that link without deleting it, or remove it permanently. These permissions are enforced by the API, not only by the interface.
+
+## Security properties
+
+- `HttpOnly`, `SameSite=Strict` and production `Secure` session cookies
+- only SHA-256 session and password-reset token hashes are stored
+- separate CSRF double-submit token verified against its database hash
+- restricted CORS, Helmet, payload limits and rate limiting
+- generic authentication/recovery responses
+- centralized RBAC and resource ownership checks
+- no passwords, cookies, OAuth secrets or SMTP plaintext in localStorage
+- sensitive log fields are redacted
+- audit records are immutable through the public API
+
+## Validation
+
+```bash
+npm run lint
+npx tsc -b --pretty false
+npm run build:api
+npm test
 npm run build
+npm audit
 ```
 
-## Notes
+## Production
 
-- This repo intentionally avoids authentication and backend work for now.
-- The state shape is prepared so the prototype can later connect to a real API.
-- Data is persisted in the browser using localStorage.
-# React + TypeScript + Vite
+Production activation and database/API order are documented in [`docs/production-activation.md`](docs/production-activation.md). The Nginx API proxy example is in [`docs/nginx-api.conf.example`](docs/nginx-api.conf.example).
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+The production health check must return JSON, not the SPA:
 
-Currently, two official plugins are available:
-
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
-
-## React Compiler
-
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-
+```bash
+curl https://planner.domoforge.com/api/health
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+Expected response:
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
-
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-
+```json
+{"status":"ok"}
 ```
+
+## Operational documentation
+
+- [Canonical plan contract](docs/plan-contract.md)
+- [Server-backed plan trash and purge](docs/plan-trash.md)
+- [AI proposal engine, Stage 6](docs/ai-proposal-stage6.md)
+
+## Remaining roadmap
+
+- organization channels, message editing/deletion and delivery/read receipts
+
+Do not commit completed `.env`, `*.local`, SMTP passwords, OAuth credentials or encryption keys.

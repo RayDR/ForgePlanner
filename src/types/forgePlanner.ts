@@ -1,4 +1,4 @@
-import type { PersistedRoadmapState } from '../utils/roadmapState'
+import type { CanonicalPlan } from '../../shared/plan-contract/index.js'
 
 export type PlanTemplateKey =
   | 'blank'
@@ -13,6 +13,11 @@ export type MonthlyViewPreference = 'list' | 'kanban'
 
 export interface ForgePlan {
   id: string
+  remoteId?: string
+  remoteAccess?: 'owner' | 'editor' | 'viewer'
+  remoteRevision?: number
+  remoteSharingEnabled?: boolean
+  remoteLinkId?: string
   title: string
   description: string
   startDate: string
@@ -21,7 +26,7 @@ export interface ForgePlan {
   templateKey?: PlanTemplateKey
   categories: string[]
   monthlyViewPreference: MonthlyViewPreference
-  snapshot: PersistedRoadmapState
+  snapshot: CanonicalPlan
   createdAt: string
   updatedAt: string
 }
@@ -33,6 +38,26 @@ export interface DeletedPlanRecord {
   expiresAt: string
 }
 
+export interface ServerTrashPlan {
+  id: string
+  remoteId: string
+  remoteRevision: number
+  remoteSharingEnabled: boolean
+  title: string
+  description: string
+  startDate: string
+  endDate: string
+  deletedAt: string
+  purgeAfter: string
+  restoreEligible: boolean
+}
+
+export interface PlanSyncMetadata {
+  state: 'local' | 'saving' | 'deleting' | 'synced' | 'failed' | 'offline' | 'conflict'
+  clientMutationId?: string
+  error?: { code: string; message: string }
+}
+
 export interface ForgePlannerState {
   schemaVersion: number
   activePlanId?: string
@@ -40,4 +65,5 @@ export interface ForgePlannerState {
   archivedPlanIds: string[]
   hiddenPlanIds: string[]
   deletedPlans: DeletedPlanRecord[]
+  syncByPlanId: Record<string, PlanSyncMetadata>
 }

@@ -26,7 +26,7 @@ export function LocaleThemeControls({
   return (
     <div className="locale-theme-controls">
       <IconButton label={locale === 'es' ? 'Español' : 'English'} title={locale === 'es' ? switchToEnglishLabel : switchToSpanishLabel} onClick={onToggleLocale} className="icon-button--flag">
-        {locale === 'es' ? <span className="real-flag" role="img" aria-label="México">🇲🇽</span> : <span className="real-flag" role="img" aria-label="United States">🇺🇸</span>}
+        {locale === 'es' ? <span className="real-flag" role="img" aria-label="México">🇲🇽</span> : <span className="real-flag" role="img" aria-label="United States">🇺🇸</span>}<span className="language-code" aria-hidden="true">{locale === 'es' ? 'ES' : 'EN'}</span>
       </IconButton>
       <IconButton label={theme === 'dark' ? switchToLightLabel : switchToDarkLabel} onClick={onToggleTheme} className="icon-button--theme">
         {theme === 'dark' ? <SunIcon width={18} height={18} /> : <MoonIcon width={18} height={18} />}

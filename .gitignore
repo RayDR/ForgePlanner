@@ -10,6 +10,12 @@ lerna-debug.log*
 node_modules
 dist
 dist-ssr
+server-dist
+.postgres-data
+.pgsocket
+.env
+.env.*
+!.env.example
 *.local
 
 # Editor directories and files

@@ -35,170 +35,33 @@ export type CategoryKey =
   | 'admin'
   | 'risk-catchup'
 
-export interface CategoryMeta {
-  key: string
-  label: string
-  tone: 'slate' | 'blue' | 'green' | 'amber' | 'rose'
-  isDefault?: boolean
-}
+export type CategoryMeta = PlanCategoryDefinition
 
-export interface Subtask {
-  id: string
-  title: string
-  completed: boolean
-  weight?: number
-}
+export type Subtask = PlanSubtask
 
-export interface Comment {
-  id: string
-  author: string
-  message: string
-  createdAt: string
-}
+export type Comment = PlanComment
 
-export interface ActivityStatusDefinition {
-  id: string
-  label: string
-  colorKey: ActivityColorKey
-  order: number
-  isDefault?: boolean
-}
+export type ActivityStatusDefinition = PlanStatusDefinition
 
-export interface ActivityHistoryEntry {
-  id: string
-  activityId: string
-  type:
-    | 'created'
-    | 'edited'
-    | 'status-changed'
-    | 'monthly-entry-updated'
-    | 'month-changed'
-    | 'skipped'
-    | 'paused'
-    | 'resumed'
-    | 'dependency-blocked-move'
-    | 'subtask-created'
-    | 'subtask-updated'
-    | 'subtask-completed'
-    | 'subtask-deleted'
-    | 'subtask-reordered'
-    | 'comment-added'
-    | 'comment-deleted'
-    | 'deleted'
-    | 'restored'
-  message: string
-  occurredAt: string
-  monthId?: string
-}
+export type ActivityHistoryEntry = PlanActivityHistoryEntry
 
-export interface ActivityRelationship {
-  id: string
-  sourceActivityId: string
-  targetActivityId: string
-  type: 'linked' | 'dependency' | 'sequence'
-  relationshipMode: RelationshipMode
-}
+export type ActivityRelationship = PlanActivityRelationship
 
-export interface MonthlyActivityEntry {
-  monthId: string
-  status: MonthlyActivityStatus
-  progress: number
-  estimatedHours?: number
-  actualHours?: number
-  notes?: string
-  isSkipped?: boolean
-  isPaused?: boolean
-  resumedFromMonthId?: string
-  continuedFromMonthId?: string
-  savingsImpact?: number
-  budgetImpact?: number
-}
+export type MonthlyActivityEntry = PlanMonthlyActivityEntry
 
-export interface Goal {
-  id: string
-  title: string
-  description: string
-  targetDate: string
-  category: CategoryKey
-}
+export type Goal = PlanGoal
 
-export interface Milestone {
-  id: string
-  title: string
-  monthId: string
-  category: CategoryKey
-  activityId?: string
-}
+export type Milestone = PlanMilestone
 
-export interface MonthlySavingsEntry {
-  monthId: string
-  target: number
-  actual: number
-  notes?: string
-  updatedAt?: string
-}
+export type MonthlySavingsEntry = PlanMonthlySavingsEntry
 
-export interface SavingsPlan {
-  currency: 'USD' | 'CAD'
-  enabled?: boolean
-  mode?: 'free' | 'monthly-target'
-  defaultMonthlyTarget?: number
-  targetTotal: number
-  monthlyEntries: MonthlySavingsEntry[]
-}
+export type SavingsPlan = PlanSavings
 
-export interface Activity {
-  id: string
-  title: string
-  description: string
-  category: string
-  sequenceNumber?: number
-  recurrence?: ActivityRecurrence
-  priority: ActivityPriority
-  relationshipMode: RelationshipMode
-  startDate: string
-  endDate?: string
-  estimatedHours?: number
-  parentGoalId?: string
-  linkedActivityIds: string[]
-  dependencyIds: string[]
-  sequenceGroupId?: string
-  milestone: boolean
-  colorKey: ActivityColorKey
-  statusId: string
-  progressMode?: 'completion' | 'weighted'
-  budgetImpact?: number
-  savingsImpact?: number
-  notes: string
-  subtasks: Subtask[]
-  comments: Comment[]
-  history: ActivityHistoryEntry[]
-  monthlyEntries: Record<string, MonthlyActivityEntry>
-}
+export type Activity = PlanActivity
 
-export interface ActivityTrashItem {
-  activity: Activity
-  deletedAt: string
-  expiresAt: string
-}
+export type ActivityTrashItem = PlanActivityTrashItem
 
-export interface Project {
-  id: string
-  name: string
-  objective: string
-  startDate: string
-  plannedStartDate?: string
-  endDate: string
-  plannedEndDate: string
-  actualEndDate?: string
-  completedAt?: string
-  selectedYear: number
-  goals: Goal[]
-  milestones: Milestone[]
-  statusDefinitions: ActivityStatusDefinition[]
-  categoryDefinitions?: CategoryMeta[]
-  savingsPlan: SavingsPlan
-}
+export type Project = PlanProject
 
 export interface MonthBucket {
   id: string
@@ -233,3 +96,4 @@ export interface ActivityDraft {
   subtasks: string[]
   recurrence?: ActivityRecurrence
 }
+import type { PlanActivity, PlanActivityHistoryEntry, PlanActivityRelationship, PlanActivityTrashItem, PlanCategoryDefinition, PlanComment, PlanGoal, PlanMilestone, PlanMonthlyActivityEntry, PlanMonthlySavingsEntry, PlanProject, PlanSavings, PlanStatusDefinition, PlanSubtask } from '../../shared/plan-contract/index.js'

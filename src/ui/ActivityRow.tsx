@@ -8,6 +8,7 @@ import {
 import { CategoryPill } from './CategoryPill'
 import { MonthlyActionMenu } from './MonthlyActionMenu'
 import { StatusPill } from './StatusPill'
+import { useRoadmapStore } from '../hooks/useRoadmapStore'
 
 interface ActivityRowProps {
   activity: Activity
@@ -16,6 +17,7 @@ interface ActivityRowProps {
 }
 
 export function ActivityRow({ activity, monthId, onOpen }: ActivityRowProps) {
+  const locale = useRoadmapStore((state) => state.locale)
   const status = monthId ? getActivityStatusForMonth(activity, monthId) ?? getActivityGlobalStatus(activity) : getActivityGlobalStatus(activity)
   const monthProgress = monthId ? getActivityProgressForMonth(activity, monthId) : 0
   const globalProgress = getActivityGlobalProgress(activity)
@@ -32,17 +34,17 @@ export function ActivityRow({ activity, monthId, onOpen }: ActivityRowProps) {
         <div className="activity-row-meta">
           <CategoryPill category={activity.category} />
           <StatusPill status={status} />
-          {activity.dependencyIds.length ? <span className="badge badge-slate">dep {activity.dependencyIds.length}</span> : null}
-          {activity.linkedActivityIds.length ? <span className="badge badge-slate">link {activity.linkedActivityIds.length}</span> : null}
-          {activity.milestone ? <span className="badge badge-amber">milestone</span> : null}
+          {activity.dependencyIds.length ? <span className="badge badge-slate">{locale === 'es' ? 'dep.' : 'dep.'} {activity.dependencyIds.length}</span> : null}
+          {activity.linkedActivityIds.length ? <span className="badge badge-slate">{locale === 'es' ? 'vínc.' : 'link'} {activity.linkedActivityIds.length}</span> : null}
+          {activity.milestone ? <span className="badge badge-amber">{locale === 'es' ? 'hito' : 'milestone'}</span> : null}
         </div>
       </div>
       <div className="activity-row-side">
         <div className="activity-progress-copy">
-          {monthId ? <span>Month {monthProgress}%</span> : null}
-          <span>Global {globalProgress}%</span>
+          {monthId ? <span>{locale === 'es' ? 'Mes' : 'Month'} {monthProgress}%</span> : null}
+          <span>{locale === 'es' ? 'Global' : 'Global'} {globalProgress}%</span>
           <span>
-            {activity.subtasks.filter((subtask) => subtask.completed).length}/{activity.subtasks.length} subtasks
+            {activity.subtasks.filter((subtask) => subtask.completed).length}/{activity.subtasks.length} {locale === 'es' ? 'subtareas' : 'subtasks'}
           </span>
         </div>
         {monthId ? <MonthlyActionMenu activity={activity} monthId={monthId} onOpen={onOpen} /> : null}

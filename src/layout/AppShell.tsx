@@ -7,12 +7,15 @@ import { copy } from '../i18n'
 import { Button } from '../ui/Button'
 import { Card } from '../ui/Card'
 import { IconButton } from '../ui/IconButton'
-import { LocaleThemeControls } from '../ui/LocaleThemeControls'
 import { formatDateRange, getProjectYears } from '../utils/dateUtils'
 import { formatCurrency, getAverageProgress, getSavingsProgress } from '../utils/progressUtils'
 import { getProjectSavingsTotals, getYearlySavingsTotals, isSavingsTrackingEnabled } from '../utils/roadmapModel'
 import { resolveInitialMonthForYear } from '../utils/monthSelection'
 import { CalendarIcon, ListIcon, MoreVerticalIcon, PencilIcon } from '../ui/icons'
+import { useSession } from '../auth/SessionProvider'
+import { HeaderActions } from './HeaderActions'
+import { PlanVersionHistory } from '../plans/PlanVersionHistory'
+import { getIdentityScope } from '../persistence/identityScope'
 
 const views = [
   { to: '/roadmap', label: 'Annual roadmap' },
@@ -20,11 +23,13 @@ const views = [
 ]
 
 export function AppShell() {
+  const { setAppearance } = useSession()
   const importInputRef = useRef<HTMLInputElement | null>(null)
   const importExcelInputRef = useRef<HTMLInputElement | null>(null)
   const [showDataMenu, setShowDataMenu] = useState(false)
   const [showSavingsBreakdown, setShowSavingsBreakdown] = useState(false)
   const [showDateEditor, setShowDateEditor] = useState(false)
+  const [showVersionHistory, setShowVersionHistory] = useState(false)
   const [dateDraft, setDateDraft] = useState({ startDate: '', endDate: '' })
   const dataMenuRef = useRef<HTMLDivElement | null>(null)
   const project = useRoadmapStore((state) => state.project)
@@ -62,6 +67,7 @@ export function AppShell() {
   const years = getProjectYears(project.startDate, project.endDate)
   const t = copy[locale]
   const savingsEnabled = isSavingsTrackingEnabled(project)
+  const readOnly = activePlan?.remoteAccess === 'viewer'
 
   function selectYear(year: number) {
     if (location.pathname.includes('/monthly') && planId) {
@@ -93,7 +99,7 @@ export function AppShell() {
   }, [theme])
 
   useEffect(() => {
-    syncActivePlanFromRoadmap()
+    if (!readOnly) syncActivePlanFromRoadmap()
   }, [
     syncActivePlanFromRoadmap,
     activePlanId,
@@ -102,6 +108,7 @@ export function AppShell() {
     selectedYear,
     locale,
     theme,
+    readOnly,
   ])
 
   useEffect(() => {
@@ -176,16 +183,16 @@ export function AppShell() {
     <div className="app-bg">
       <div className="shell">
         <header className="app-header">
-          <div className="app-header-topbar">
+          <div className="app-header-topbar global-app-bar">
             <Button className="back-to-plans" variant="ghost" onClick={() => navigate('/plans')}>
               <span aria-hidden="true">←</span>
               {t.backToPlans}
             </Button>
-            <LocaleThemeControls
+            <HeaderActions
               locale={locale}
               theme={theme}
-              onToggleLocale={() => setLocale(locale === 'es' ? 'en' : 'es')}
-              onToggleTheme={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+              onToggleLocale={() => { const next = locale === 'es' ? 'en' : 'es'; setLocale(next); void setAppearance({ locale: next }) }}
+              onToggleTheme={() => { const next = theme === 'dark' ? 'light' : 'dark'; setTheme(next); void setAppearance({ theme: next }) }}
               switchToEnglishLabel={t.languageSwitchToEnglish}
               switchToSpanishLabel={t.languageSwitchToSpanish}
               switchToDarkLabel={t.switchToDarkMode}
@@ -196,10 +203,11 @@ export function AppShell() {
             <p className="eyebrow">{t.appName}</p>
             <h1>{activePlan?.title ?? project.name}</h1>
             <p className="header-copy">{project.objective}</p>
+            {readOnly ? <p className="plan-read-only-badge">{t.sharedReadOnly}</p> : null}
           </div>
 
           <div className="metrics-grid">
-            <Card className="metric-card metric-card-interactive" title="Doble clic para editar fechas" onDoubleClick={() => { setDateDraft({ startDate: project.startDate, endDate: project.endDate }); setShowDateEditor(true) }}>
+            <Card className={`metric-card ${readOnly ? '' : 'metric-card-interactive'}`} title={readOnly ? undefined : t.editDatesTooltip} onDoubleClick={() => { if (!readOnly) { setDateDraft({ startDate: project.startDate, endDate: project.endDate }); setShowDateEditor(true) } }}>
               <span>{t.planWindow}</span>
               <strong>{formatDateRange(project.startDate, project.endDate)}</strong>
             </Card>
@@ -213,7 +221,7 @@ export function AppShell() {
             </Card> : null}
           </div>
           <details className="mobile-dashboard-details">
-            <summary>{locale === 'es' ? 'Detalles del plan' : 'Plan details'}</summary>
+            <summary>{t.planDetails}</summary>
             <div>
               <button type="button" onClick={() => { setDateDraft({ startDate: project.startDate, endDate: project.endDate }); setShowDateEditor(true) }}><span>{t.planWindow}</span><strong>{formatDateRange(project.startDate, project.endDate)}</strong><PencilIcon width={15} height={15} /></button>
               <button type="button"><span>{t.totalProgress}</span><strong>{totalProgress}%</strong></button>
@@ -244,9 +252,10 @@ export function AppShell() {
               {showDataMenu ? (
                 <div className="data-menu">
                   <button onClick={handleExportJson}>{t.exportJson}</button>
-                  <button onClick={() => importInputRef.current?.click()}>{t.importJson}</button>
+                  {!readOnly ? <button onClick={() => importInputRef.current?.click()}>{t.importJson}</button> : null}
                   <button onClick={handleExportExcel}>{t.exportExcel}</button>
-                  <button onClick={() => importExcelInputRef.current?.click()}>{t.importExcel}</button>
+                  {!readOnly ? <button onClick={() => importExcelInputRef.current?.click()}>{t.importExcel}</button> : null}
+                  {activePlan?.remoteId ? <button onClick={() => { setShowVersionHistory(true); setShowDataMenu(false) }}>{t.versionHistory}</button> : null}
                 </div>
               ) : null}
             </div>
@@ -327,12 +336,12 @@ export function AppShell() {
       {showDateEditor ? (
         <div className="modal-overlay" onClick={() => setShowDateEditor(false)}>
           <div className="modal-shell compact-dialog" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
-            <header className="modal-header"><h2>{locale === 'es' ? 'Ventana del plan' : 'Plan window'}</h2><button className="btn btn-ghost" onClick={() => setShowDateEditor(false)}>×</button></header>
+            <header className="modal-header"><h2>{t.planWindow}</h2><button className="btn btn-ghost" onClick={() => setShowDateEditor(false)}>×</button></header>
             <div className="modal-body form-grid">
-              <label className="field-wrap"><span>{locale === 'es' ? 'Fecha de inicio' : 'Start date'}</span><input className="field-input" type="date" value={dateDraft.startDate} onChange={(event) => setDateDraft((current) => ({ ...current, startDate: event.target.value }))} /></label>
-              <label className="field-wrap"><span>{locale === 'es' ? 'Fecha de fin' : 'End date'}</span><input className="field-input" type="date" value={dateDraft.endDate} onChange={(event) => setDateDraft((current) => ({ ...current, endDate: event.target.value }))} /></label>
+              <label className="field-wrap"><span>{t.startDate}</span><input className="field-input" type="date" value={dateDraft.startDate} onChange={(event) => setDateDraft((current) => ({ ...current, startDate: event.target.value }))} /></label>
+              <label className="field-wrap"><span>{t.endDate}</span><input className="field-input" type="date" value={dateDraft.endDate} onChange={(event) => setDateDraft((current) => ({ ...current, endDate: event.target.value }))} /></label>
             </div>
-            <footer className="modal-footer"><button className="btn btn-ghost" onClick={() => setShowDateEditor(false)}>{t.cancel}</button><button className="btn btn-primary" onClick={() => { updateProjectDetails(dateDraft); setShowDateEditor(false) }}>{locale === 'es' ? 'Guardar' : 'Save'}</button></footer>
+            <footer className="modal-footer"><button className="btn btn-ghost" onClick={() => setShowDateEditor(false)}>{t.cancel}</button><button className="btn btn-primary" onClick={() => { updateProjectDetails(dateDraft); setShowDateEditor(false) }}>{t.save}</button></footer>
           </div>
         </div>
       ) : null}
@@ -342,12 +351,14 @@ export function AppShell() {
           <div className="modal-shell savings-breakdown-dialog" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
             <header className="modal-header"><h2>{t.savingsProgress}</h2><button className="btn btn-ghost" onClick={() => setShowSavingsBreakdown(false)}>×</button></header>
             <div className="modal-body savings-breakdown">
-              {yearlySavingsTotals.map((item) => <Card key={item.year} className="roadmap-summary-card"><strong>{item.year}</strong><span>{locale === 'es' ? 'Objetivo' : 'Target'}: {formatCurrency(item.target)}</span><span>{locale === 'es' ? 'Real' : 'Actual'}: {formatCurrency(item.actual)}</span><span>{locale === 'es' ? 'Diferencia' : 'Difference'}: {formatCurrency(item.difference)}</span></Card>)}
-              <Card className="roadmap-summary-card"><strong>{locale === 'es' ? 'Total global' : 'Global total'}</strong><span>{formatCurrency(savingsTotals.actual)} / {formatCurrency(savingsTotals.target)}</span><span>{locale === 'es' ? 'Restante' : 'Remaining'}: {formatCurrency(savingsTotals.remaining)}</span><span>{savingsTotals.progress}%</span></Card>
+              {yearlySavingsTotals.map((item) => <Card key={item.year} className="roadmap-summary-card"><strong>{item.year}</strong><span>{t.target}: {formatCurrency(item.target)}</span><span>{t.actual}: {formatCurrency(item.actual)}</span><span>{t.difference}: {formatCurrency(item.difference)}</span></Card>)}
+              <Card className="roadmap-summary-card"><strong>{t.globalTotal}</strong><span>{formatCurrency(savingsTotals.actual)} / {formatCurrency(savingsTotals.target)}</span><span>{t.remaining}: {formatCurrency(savingsTotals.remaining)}</span><span>{savingsTotals.progress}%</span></Card>
             </div>
           </div>
         </div>
       ) : null}
+
+      {showVersionHistory && activePlan?.remoteId ? <PlanVersionHistory key={`${getIdentityScope() ?? 'unknown'}:${activePlan.remoteId}`} plan={activePlan} locale={locale} onClose={() => setShowVersionHistory(false)} /> : null}
 
       <ActivityModal />
     </div>

@@ -118,7 +118,7 @@ export function MonthCard({
     actual: savings.actual,
     notes: savings.notes,
   })
-  const t = locale === 'es' ? { open: 'Abrir', earlier: 'Mover antes', skip: 'Omitir', pause: 'Pausar', continueIn: 'Continuar en', resumeIn: 'Reanudar en', empty: 'Sin objetivos registrados', create: 'Crear actividad', more: 'más', target: 'Objetivo', actual: 'Real', notes: 'Notas', cancel: 'Cancelar', save: 'Guardar', of: 'de', editSavings: 'Editar ahorro' } : { open: 'Open', earlier: 'Move earlier', skip: 'Skip', pause: 'Pause', continueIn: 'Continue in', resumeIn: 'Resume in', empty: 'No objectives registered', create: 'Create activity', more: 'more', target: 'Target', actual: 'Actual', notes: 'Notes', cancel: 'Cancel', save: 'Save', of: 'of', editSavings: 'Edit savings' }
+  const t = locale === 'es' ? { open: 'Abrir', earlier: 'Mover antes', skip: 'Omitir', pause: 'Pausar', continueIn: 'Continuar en', resumeIn: 'Reanudar en', empty: 'Sin objetivos registrados', create: 'Crear actividad', more: 'más', target: 'Objetivo', actual: 'Real', notes: 'Notas', cancel: 'Cancelar', save: 'Guardar', of: 'de', editSavings: 'Editar ahorro', blockedBy: 'Bloqueada por', moveBackward: 'Mover entrada al mes anterior', noEarlier: 'No hay un mes anterior disponible', locked: 'Bloqueada' } : { open: 'Open', earlier: 'Move earlier', skip: 'Skip', pause: 'Pause', continueIn: 'Continue in', resumeIn: 'Resume in', empty: 'No objectives registered', create: 'Create activity', more: 'more', target: 'Target', actual: 'Actual', notes: 'Notes', cancel: 'Cancel', save: 'Save', of: 'of', editSavings: 'Edit savings', blockedBy: 'Blocked by', moveBackward: 'Move entry backward', noEarlier: 'No earlier month available', locked: 'Locked' }
   const previousActiveMonth = [...monthOptions].filter((item) => item.active && item.id < month.id).at(-1)
 
   const monthDependencies = useMemo(() => {
@@ -203,10 +203,10 @@ export function MonthCard({
                     <button
                       className="month-entry-handle"
                       disabled={Boolean(blocker) || !previousActiveMonth}
-                      title={blocker ? `Blocked by ${blocker}` : previousActiveMonth ? 'Move entry backward' : 'No earlier month available'}
+                      title={blocker ? `${t.blockedBy} ${blocker}` : previousActiveMonth ? t.moveBackward : t.noEarlier}
                       onClick={() => openPreviousMonth(activity)}
                     >
-                      {blocker ? <span className="lock-icon">Lock</span> : <ChevronRightIcon className="move-earlier-icon" width={14} height={14} />}
+                      {blocker ? <span className="lock-icon">{t.locked}</span> : <ChevronRightIcon className="move-earlier-icon" width={14} height={14} />}
                     </button>
                     <button className="month-entry-title" onClick={() => onOpenActivity(activity.id)} title={activity.title}>
                       {clampActivityTitle(activity.title)}
