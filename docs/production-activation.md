@@ -24,6 +24,7 @@ AI_PROVIDER=mock
 # Only required when AI_PROVIDER=openai; never expose it through VITE_*.
 OPENAI_API_KEY=
 OPENAI_PROPOSAL_MODEL=gpt-5.6-sol
+OPENAI_CONVERSION_MODEL=gpt-5.6-sol
 OPENAI_TIMEOUT_MS=20000
 ```
 

@@ -12,7 +12,7 @@ export type AiIdentity = { actorUserId: string; effectiveUserId: string; imperso
 const LEASE_MS = 30_000; const PROPOSAL_TTL_MS = 30 * 24 * 60 * 60 * 1000; const READY_TTL_MS = 90 * 24 * 60 * 60 * 1000
 
 function safeMetadata(input: PlanningInput, selectedLanguage: 'EN' | 'ES') {
-  return { inputLength: input.goal.length + (input.additionalContext?.length ?? 0) + input.conversation.reduce((total, item) => total + item.content.length, 0), selectedLanguage, hasStartDate: Boolean(input.startDate), hasTargetDate: Boolean(input.targetDate), hasBudget: input.monthlyBudget != null, constraintCount: input.constraints.length, nonNegotiableCount: input.nonNegotiables.length, intensity: input.planIntensity, clarificationCount: input.clarificationCount }
+  return { inputLength: input.goal.length + (input.additionalContext?.length ?? 0) + input.conversation.reduce((total, item) => total + item.content.length, 0), selectedLanguage, hasStartDate: Boolean(input.startDate), hasTargetDate: Boolean(input.targetDate), hasBudget: input.monthlyBudget != null, constraintCount: input.constraints.length, nonNegotiableCount: input.nonNegotiables.length, intensity: input.planIntensity, clarificationCount: input.clarificationCount, approvedContext: { startDate: input.startDate ?? null, targetDate: input.targetDate ?? null, durationMonths: input.durationMonths ?? null, hoursPerWeek: input.hoursPerWeek ?? null, monthlyBudget: input.monthlyBudget ?? null, currency: input.currency ?? null, planningScope: input.planningScope ?? 'balanced', detailLevel: input.detailLevel ?? 'detailed', financialMode: input.financialMode ?? 'none', savingsGoal: input.savingsGoal ?? null, intensity: input.planIntensity } }
 }
 
 function metadata(operation: AiOperation & { currentProposalRevision?: { revision: number } | null; readyProposalRevision?: { revision: number } | null }) {
@@ -34,7 +34,7 @@ export class AiProposalService {
         if (existing.requestFingerprint !== requestFingerprint) throw new ApiError(409, 'AI_PROPOSAL_CONFLICT', 'This request identifier was already used with different input.')
         return { cached: existing, requestId: existing.processingRequestId }
       }
-      const active = await tx.aiOperation.count({ where: { ownerUserId, status: { in: ['DRAFT','PENDING','PROPOSED','REFINING','READY_FOR_CONVERSION'] }, expiresAt: { gt: this.now() } } })
+      const active = await tx.aiOperation.count({ where: { ownerUserId, status: { in: ['DRAFT','PENDING','PROPOSED','REFINING','READY_FOR_CONVERSION','CONVERTING','PLAN_PREVIEW_READY','CONVERSION_FAILED'] }, expiresAt: { gt: this.now() } } })
       if (active >= 10) throw new ApiError(429, 'AI_PROPOSAL_LIMIT_REACHED', 'The active proposal limit has been reached.')
       const requestId = randomUUID(); const now = this.now(); const lease = new Date(now.getTime() + LEASE_MS)
       const operation = await tx.aiOperation.create({ data: { ownerUserId, status: 'PENDING', selectedLanguage: selected, detectedLanguage: detected, provider: this.provider.name, model: this.provider.model, promptTemplateVersion: 'planning-turn-v1', sanitizedInputMetadata: safeMetadata(input, selected), requestFingerprint, generationClientRequestId: input.clientRequestId, processingRequestId: requestId, processingLeaseExpiresAt: lease, expiresAt: new Date(now.getTime() + PROPOSAL_TTL_MS), requests: { create: { id: requestId, ownerUserId, type: 'GENERATION', clientRequestId: input.clientRequestId, requestFingerprint, status: 'RESERVED', leaseExpiresAt: lease } } } })

@@ -15,8 +15,10 @@ import { CURRENT_PLAN_SCHEMA_VERSION, PLANNER_CONTRACT_VERSION } from '../../sha
 import type { Activity, CategoryMeta } from '../types/roadmap'
 import { DEFAULT_PROJECT_STATUSES } from '../utils/roadmapState'
 import { createIdentityScopedStorage } from '../persistence/scopedStorage'
+import { readGuestGeneratedPlans, saveGuestGeneratedPlan } from '../ai/guestGeneratedPlanStorage'
 
 const STORE_VERSION = 2
+const sessionOnlyPlanIds = new Set<string>()
 
 export interface PlanDraftInput {
   title: string
@@ -36,6 +38,8 @@ interface ForgePlannerStore extends ForgePlannerState {
   openPlan: (planId: string) => void
   createPlan: (draft: PlanDraftInput) => string
   addLocalPlan: (plan: ForgePlan) => void
+  addSessionPlan: (plan: ForgePlan) => void
+  hydrateSessionPlans: () => void
   retainFailedCreate: (plan: ForgePlan, metadata: PlanSyncMetadata) => void
   acceptServerPlan: (plan: ForgePlan, replacedPlanId?: string) => void
   setPlanSync: (planId: string, metadata: PlanSyncMetadata) => void
@@ -211,6 +215,8 @@ export const useForgePlannerStore = create<ForgePlannerStore>()(
         return plan.id
       },
       addLocalPlan: (plan) => { set((state) => ({ plans: [plan, ...state.plans.filter((item) => item.id !== plan.id)], activePlanId: plan.id, syncByPlanId: { ...state.syncByPlanId, [plan.id]: { state: 'local' } } })); useRoadmapStore.getState().loadSnapshot(plan.snapshot) },
+      addSessionPlan: (plan) => { sessionOnlyPlanIds.add(plan.id); saveGuestGeneratedPlan(plan); set((state) => ({ plans: [plan, ...state.plans.filter((item) => item.id !== plan.id)], activePlanId: plan.id, syncByPlanId: { ...state.syncByPlanId, [plan.id]: { state: 'local' } } })); useRoadmapStore.getState().loadSnapshot(plan.snapshot) },
+      hydrateSessionPlans: () => { const plans = readGuestGeneratedPlans(); plans.forEach((plan) => sessionOnlyPlanIds.add(plan.id)); if (!plans.length) return; set((state) => ({ plans: [...plans, ...state.plans.filter((item) => !sessionOnlyPlanIds.has(item.id))], syncByPlanId: { ...state.syncByPlanId, ...Object.fromEntries(plans.map((plan) => [plan.id, { state: 'local' as const }])) } })) },
       retainFailedCreate: (plan, metadata) => set((state) => ({ plans: [plan, ...state.plans.filter((item) => item.id !== plan.id)], syncByPlanId: { ...state.syncByPlanId, [plan.id]: metadata } })),
       acceptServerPlan: (plan, replacedPlanId) => set((state) => {
         const replacedIds = new Set([plan.id, plan.remoteId, replacedPlanId].filter((value): value is string => Boolean(value)))
@@ -449,18 +455,19 @@ export const useForgePlannerStore = create<ForgePlannerStore>()(
       skipHydration: true,
       partialize: (state): ForgePlannerState => ({
         schemaVersion: state.schemaVersion,
-        activePlanId: state.activePlanId,
-        plans: state.plans,
+        activePlanId: state.activePlanId && !sessionOnlyPlanIds.has(state.activePlanId) ? state.activePlanId : undefined,
+        plans: state.plans.filter((plan) => !sessionOnlyPlanIds.has(plan.id)),
         archivedPlanIds: state.archivedPlanIds,
         hiddenPlanIds: state.hiddenPlanIds,
         deletedPlans: state.deletedPlans,
-        syncByPlanId: state.syncByPlanId,
+        syncByPlanId: Object.fromEntries(Object.entries(state.syncByPlanId).filter(([id]) => !sessionOnlyPlanIds.has(id))),
       }),
     },
   ),
 )
 
 export function resetForgePlannerMemory() {
+  sessionOnlyPlanIds.clear()
   useForgePlannerStore.setState({
     schemaVersion: STORE_VERSION,
     activePlanId: undefined,

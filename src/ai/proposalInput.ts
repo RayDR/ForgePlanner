@@ -32,6 +32,10 @@ export function buildProposalInput(goal: string, context: AiComposerContext, loc
     constraints: [], nonNegotiables: [],
     experienceLevel: context.complexity === 'simple' ? 'beginner' as const : context.complexity === 'advanced' ? 'advanced' as const : 'intermediate' as const,
     preferredLanguage: planning?.preferredLanguage ?? locale, planIntensity: context.scope === 'focused' ? 'light' as const : context.scope === 'comprehensive' ? 'ambitious' as const : 'balanced' as const, locale,
+    planningScope: context.scope,
+    detailLevel: context.detail,
+    financialMode: context.financialMode,
+    savingsGoal: context.financialMode === 'savings' ? context.financialAmount : null,
     conversation: planning?.conversation ?? [], clarificationCount: planning?.clarificationCount ?? 0, continueWithAssumptions: planning?.continueWithAssumptions ?? false,
   }
 }

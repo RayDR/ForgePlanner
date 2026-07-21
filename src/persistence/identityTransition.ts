@@ -1,6 +1,6 @@
 import { resetForgePlannerMemory, useForgePlannerStore } from '../hooks/useForgePlannerStore'
 import { resetRoadmapMemory, useRoadmapStore } from '../hooks/useRoadmapStore'
-import { setIdentityScope, type IdentityScope } from './identityScope'
+import { GUEST_SCOPE, setIdentityScope, type IdentityScope } from './identityScope'
 
 let transitionSequence = 0
 
@@ -19,6 +19,7 @@ export async function transitionBrowserIdentity(scope: IdentityScope) {
     useForgePlannerStore.persist.rehydrate(),
     useRoadmapStore.persist.rehydrate(),
   ])
+  if (scope === GUEST_SCOPE) useForgePlannerStore.getState().hydrateSessionPlans()
   return sequence === transitionSequence
 }
 

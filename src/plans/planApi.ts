@@ -50,7 +50,7 @@ function payload(plan: ForgePlan) {
   return { status: 'active', snapshot: plan.snapshot }
 }
 
-function fromRemote(remote: RemotePlan, remoteLinkId?: string): ForgePlan {
+export function fromRemote(remote: RemotePlan, remoteLinkId?: string): ForgePlan {
   const result = parsePlanDocument(remote.snapshot)
   if (!result.success) throw new PlanRequestError(500, 'CORRUPTED_PLAN_SNAPSHOT', 'The stored plan failed contract validation.')
   const snapshot = result.plan

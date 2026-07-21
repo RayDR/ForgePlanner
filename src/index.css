@@ -100,6 +100,14 @@
 .ai-proposal-message { width: min(100%, 900px); max-width: 900px; padding: clamp(1rem, 2vw, 1.5rem); background: color-mix(in srgb, var(--color-primary) 6%, var(--color-surface)); box-shadow: 0 16px 38px color-mix(in srgb, var(--color-bg) 62%, transparent); }
 .ai-proposal-message > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .ai-proposal-message > header > div { display: flex; align-items: center; gap: 10px; }
+.ai-plan-preview { width: min(100%, 900px); margin-top: 14px; padding: clamp(1rem, 2.5vw, 1.6rem); }
+.ai-plan-preview > header, .ai-plan-preview > footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.ai-plan-preview > header h2 { margin: 4px 0 0; }
+.ai-plan-preview__metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 18px 0; }
+.ai-plan-preview__metrics > div { min-width: 0; padding: 10px 12px; border: 1px solid var(--color-border); border-radius: 10px; background: color-mix(in srgb, var(--color-primary) 4%, var(--color-surface)); }
+.ai-plan-preview__metrics dt { color: var(--color-text-subtle); font-size: 11px; font-weight: 800; text-transform: uppercase; }
+.ai-plan-preview__metrics dd { margin: 4px 0 0; overflow-wrap: anywhere; }
+.ai-plan-preview > footer { justify-content: flex-end; margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--color-border); }
 .ai-proposal-message h2 { margin: 14px 0 6px; font-size: clamp(1.25rem, 2.5vw, 1.75rem); }
 .ai-proposal-message h3 { margin: 18px 0 8px; font-size: 1rem; }
 .ai-proposal-message p { color: var(--color-text-muted); }
@@ -127,6 +135,7 @@
   .ai-proposal-review > header { flex-direction: column; }
   .ai-session-error { align-items: stretch; flex-direction: column; }
   .ai-proposal-facts { grid-template-columns: 1fr; }
+  .ai-plan-preview__metrics { grid-template-columns: 1fr 1fr; }
   .ai-proposal-actions .btn { flex: 1 1 calc(50% - 8px); }
 }
 

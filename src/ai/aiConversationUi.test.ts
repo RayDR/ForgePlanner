@@ -11,7 +11,8 @@ describe('inline conversational proposal UI', () => {
     expect(view).toContain("result.turn.action === 'ASK'")
     expect(view).toContain('ai-proposal-message')
     expect(view).toContain('message.proposal.successIndicators')
-    expect(view).not.toContain('navigate(')
+    expect(view).not.toContain("navigate('/ai/plan-proposals")
+    expect(view).toContain('data-testid="ai-plan-preview"')
   })
 
   it('exposes all four proposal actions and uses the exact current revision', () => {
@@ -25,5 +26,10 @@ describe('inline conversational proposal UI', () => {
   it('keeps the OpenAI key backend-only', () => {
     expect(api).not.toContain('OPENAI_API_KEY')
     expect(packageJson).toContain('"openai"')
+  })
+
+  it('opens a generated guest plan from the session-only boundary', () => {
+    expect(view).toContain('addSessionPlan(plan)')
+    expect(view).toContain('navigate(`/plans/${plan.id}/roadmap`)')
   })
 })

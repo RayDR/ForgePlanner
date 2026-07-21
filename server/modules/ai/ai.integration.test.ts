@@ -3,6 +3,7 @@ import { PrismaClient } from '@prisma/client'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { AiProposalService } from './ai.service.js'
 import { AiProposalExpirationService } from './ai-expiration.service.js'
+import { AiPlanConversionService } from './ai-conversion.service.js'
 import { MockAiProposalProvider } from './mock-ai-proposal.provider.js'
 import type { AiProposalProvider, ProviderContext } from './ai-provider.js'
 import type { ProposalInput } from './ai.schemas.js'
@@ -19,11 +20,16 @@ class GateProvider implements AiProposalProvider {
   async refineProposal(current: AiPlanningProposal, instruction: string, context: ProviderContext) { this.started(); await this.gate; return this.delegate.refineProposal(current, instruction, context) }
 }
 
+class InvalidConversionProvider extends MockAiProposalProvider {
+  conversionCalls = 0
+  override async convertAcceptedProposalToPlan() { this.conversionCalls += 1; return { plan: { schemaVersion: 8 }, providerRequestId: 'invalid', inputTokenCount: null, outputTokenCount: null, estimatedCostMicros: null } }
+}
+
 integration('PostgreSQL AI proposal lifecycle', () => {
   const db = new PrismaClient({ datasources: { db: { url: testUrl ?? 'postgresql://test:test@127.0.0.1:1/stage6_test' } } })
   let userA: { id: string }; let userB: { id: string }
   beforeAll(async () => db.$connect()); afterAll(async () => db.$disconnect())
-  beforeEach(async () => { await db.auditLog.deleteMany(); await db.aiOperation.deleteMany(); await db.profile.deleteMany(); await db.user.deleteMany(); userA = await db.user.create({ data: { email: `${randomUUID()}@a.test`, passwordHash: 'test' }, select: { id: true } }); userB = await db.user.create({ data: { email: `${randomUUID()}@b.test`, passwordHash: 'test' }, select: { id: true } }) })
+  beforeEach(async () => { await db.auditLog.deleteMany(); await db.aiOperation.deleteMany(); await db.plan.deleteMany(); await db.profile.deleteMany(); await db.user.deleteMany(); userA = await db.user.create({ data: { email: `${randomUUID()}@a.test`, passwordHash: 'test' }, select: { id: true } }); userB = await db.user.create({ data: { email: `${randomUUID()}@b.test`, passwordHash: 'test' }, select: { id: true } }) })
 
   it('creates a separate operation and immutable revision without Plan writes or raw input metadata', async () => {
     const beforePlans = await db.plan.count(); const service = new AiProposalService(db, new MockAiProposalProvider()); const result = await service.generate(userA.id, input(), identity(userA.id))
@@ -66,4 +72,29 @@ integration('PostgreSQL AI proposal lifecycle', () => {
   it('prevents a current revision from another operation at database commit', async () => { const service = new AiProposalService(db, new MockAiProposalProvider()); const a = await service.generate(userA.id, input(), identity(userA.id)); const b = await service.generate(userA.id, input(), identity(userA.id)); const wrong = await db.aiOperation.findUniqueOrThrow({ where: { id: b.operation.id } }); await expect(db.$transaction((tx) => tx.aiOperation.update({ where: { id: a.operation.id }, data: { currentProposalRevisionId: wrong.currentProposalRevisionId } }))).rejects.toBeTruthy() })
 
   it('deletes operation, revisions and request records while retaining only safe audit identifiers', async () => { const service = new AiProposalService(db, new MockAiProposalProvider()); const created = await service.generate(userA.id, input(), identity(userA.id)); await service.remove(userA.id, created.operation.id, identity(userA.id)); expect(await db.aiOperation.findUnique({ where: { id: created.operation.id } })).toBeNull(); expect(await db.aiProposalRevision.count({ where: { aiOperationId: created.operation.id } })).toBe(0); expect(await db.aiOperationRequest.count({ where: { aiOperationId: created.operation.id } })).toBe(0); const audit = await db.auditLog.findFirstOrThrow({ where: { action: 'ai.proposal_deleted', targetId: created.operation.id } }); expect(JSON.stringify(audit)).not.toMatch(/goal|summary|phase|proposal content/i) })
+
+  it('converts the exact ready revision, ignores a newer unaccepted revision, and is idempotent', async () => {
+    const provider = new MockAiProposalProvider(); const proposals = new AiProposalService(db, provider); const conversions = new AiPlanConversionService(db, provider)
+    const created = await proposals.generate(userA.id, input(), identity(userA.id)); const refined = await proposals.refine(userA.id, created.operation.id, { clientRequestId: randomUUID(), expectedRevision: 1, instruction: 'Reduce the budget' }, identity(userA.id)); await proposals.transition(userA.id, created.operation.id, 2, 'READY_FOR_CONVERSION', identity(userA.id))
+    const readyRevision = await db.aiProposalRevision.findUniqueOrThrow({ where: { aiOperationId_revision: { aiOperationId: created.operation.id, revision: 2 } } }); const newerContent = { ...(readyRevision.content as object), title: 'UNACCEPTED TITLE' }
+    const newer = await db.aiProposalRevision.create({ data: { aiOperationId: created.operation.id, revision: 3, parentRevisionId: readyRevision.id, content: newerContent, contentLanguage: 'EN', source: 'REFINEMENT', checksum: 'a'.repeat(64), contentSizeBytes: JSON.stringify(newerContent).length } })
+    await db.aiOperation.update({ where: { id: created.operation.id }, data: { currentProposalRevisionId: newer.id } })
+    const requestId = randomUUID(); const first = await conversions.convert(userA.id, created.operation.id, requestId, identity(userA.id)); const retry = await conversions.convert(userA.id, created.operation.id, requestId, identity(userA.id))
+    expect(first.preview?.title).toBe((refined.proposal as AiPlanningProposal).title); expect(first.preview?.title).not.toBe('UNACCEPTED TITLE'); expect(retry.preview?.checksum).toBe(first.preview?.checksum)
+  })
+
+  it('creates Plan and linked PlanVersion revision 1 once in the confirmation transaction', async () => {
+    const provider = new MockAiProposalProvider(); const proposals = new AiProposalService(db, provider); const conversions = new AiPlanConversionService(db, provider)
+    const created = await proposals.generate(userA.id, input(), identity(userA.id)); await proposals.transition(userA.id, created.operation.id, 1, 'READY_FOR_CONVERSION', identity(userA.id)); const preview = await conversions.convert(userA.id, created.operation.id, randomUUID(), identity(userA.id)); const mutationId = randomUUID()
+    const first = await conversions.confirm(userA.id, created.operation.id, { clientMutationId: mutationId, checksum: preview.preview!.checksum }, identity(userA.id)); const retry = await conversions.confirm(userA.id, created.operation.id, { clientMutationId: mutationId, checksum: preview.preview!.checksum }, identity(userA.id))
+    expect(first.created).toBe(true); expect(retry).toMatchObject({ created: false, plan: { id: first.plan.id, revision: 1 } }); expect(await db.plan.count()).toBe(1)
+    const version = await db.planVersion.findUniqueOrThrow({ where: { planId_revision: { planId: first.plan.id, revision: 1 } } }); expect(version).toMatchObject({ source: 'AI_GENERATION', aiOperationId: created.operation.id, revision: 1, schemaVersion: 8 })
+  })
+
+  it('permits one bounded repair attempt and never persists invalid output', async () => {
+    const provider = new InvalidConversionProvider(); const proposals = new AiProposalService(db, provider); const conversions = new AiPlanConversionService(db, provider)
+    const created = await proposals.generate(userA.id, input(), identity(userA.id)); await proposals.transition(userA.id, created.operation.id, 1, 'READY_FOR_CONVERSION', identity(userA.id))
+    await expect(conversions.convert(userA.id, created.operation.id, randomUUID(), identity(userA.id))).rejects.toMatchObject({ code: 'AI_CONVERSION_INVALID_OUTPUT' })
+    expect(provider.conversionCalls).toBe(2); expect(await db.plan.count()).toBe(0); expect(await db.planVersion.count()).toBe(0); expect((await db.aiOperation.findUniqueOrThrow({ where: { id: created.operation.id } })).status).toBe('CONVERSION_FAILED')
+  })
 })

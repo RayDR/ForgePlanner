@@ -32,6 +32,7 @@ const schema = z.object({
   AI_PROVIDER: z.enum(['mock', 'openai']).default('mock'),
   OPENAI_API_KEY: z.string().min(20).optional(),
   OPENAI_PROPOSAL_MODEL: z.string().min(1).default('gpt-5.6-sol'),
+  OPENAI_CONVERSION_MODEL: z.string().min(1).default('gpt-5.6-sol'),
   OPENAI_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(120_000).default(20_000),
 }).superRefine((value, context) => {
   if (value.NODE_ENV === 'production' && !value.AI_GUEST_SESSION_SIGNING_KEY) {

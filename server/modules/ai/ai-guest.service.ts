@@ -6,12 +6,16 @@ import { fingerprint, prepareProposal } from './ai-integrity.js'
 import { detectProposalLanguage, selectProposalLanguage } from './ai-language.js'
 import type { AiProposalProvider } from './ai-provider.js'
 import type { PlanningInput } from './ai.schemas.js'
+import { safeValidateCanonicalPlan } from '../../../shared/plan-contract/index.js'
+import { prepareVersionSnapshot } from '../plans/plan-version-integrity.js'
+import { conversionPreview } from './ai-conversion.service.js'
 
 export const AI_GUEST_COOKIE = 'northstar_ai_guest'
 export const AI_GUEST_CSRF_COOKIE = 'northstar_ai_csrf'
 const SESSION_MS = 4 * 60 * 60 * 1000
 type SessionClaims = { v: 1; sid: string; csrfHash: string; exp: number }
-type ProposalClaims = { v: 1; sessionHash: string; operationId: string; revision: number; checksum: string; language: 'EN' | 'ES'; status: 'PROPOSED' | 'READY_FOR_CONVERSION' | 'REJECTED'; exp: number; readyRevision?: number; readyChecksum?: string }
+type ProposalClaims = { v: 1; sessionHash: string; operationId: string; revision: number; checksum: string; language: 'EN' | 'ES'; status: 'PROPOSED' | 'READY_FOR_CONVERSION' | 'REJECTED'; exp: number; approvedContext: Record<string, unknown>; readyRevision?: number; readyChecksum?: string }
+type ConversionClaims = { v: 1; sessionHash: string; operationId: string; readyRevision: number; planChecksum: string; exp: number }
 type CacheEntry = { fingerprint: string; expiresAt: number; response?: unknown; pending?: Promise<unknown> }
 type GuestGenerationResponse = {
   turn: PlanningTurn
@@ -59,7 +63,7 @@ export class AiGuestService {
       const operationId = randomUUID(); operations.add(operationId); this.operationIds.set(sessionHash, operations)
       let prepared
       try { prepared = prepareProposal(turn.proposal) } catch { throw new ApiError(502, 'AI_PROPOSAL_INVALID_OUTPUT', 'The proposal provider returned invalid content.') }
-      const claims: ProposalClaims = { v: 1, sessionHash, operationId, revision: 1, checksum: prepared.checksum, language, status: 'PROPOSED', exp: session.exp }
+      const claims: ProposalClaims = { v: 1, sessionHash, operationId, revision: 1, checksum: prepared.checksum, language, status: 'PROPOSED', exp: session.exp, approvedContext: { startDate: input.startDate ?? null, targetDate: input.targetDate ?? null, durationMonths: input.durationMonths ?? null, hoursPerWeek: input.hoursPerWeek ?? null, monthlyBudget: input.monthlyBudget ?? null, currency: input.currency ?? null, planningScope: input.planningScope, detailLevel: input.detailLevel, financialMode: input.financialMode, savingsGoal: input.savingsGoal ?? null, intensity: input.planIntensity } }
       return { turn, operation: { id: operationId, status: 'PROPOSED', selectedLanguage: language, detectedLanguage: detected, currentProposalRevision: 1, readyProposalRevision: null, refinementCount: 0, expiresAt: new Date(session.exp).toISOString() }, proposal: prepared.proposal, signedProposalToken: this.sign(claims) }
     })
   }
@@ -84,6 +88,27 @@ export class AiGuestService {
     const claims = this.assertProposal(session, operationId, input.expectedRevision, input.currentProposal, input.signedProposalToken, target)
     const next: ProposalClaims = { ...claims, status: target, ...(target === 'READY_FOR_CONVERSION' ? { readyRevision: claims.revision, readyChecksum: claims.checksum } : {}) }
     return { turn: { action: 'PROPOSE' as const, proposal: input.currentProposal, language: next.language.toLowerCase() as 'en' | 'es' }, operation: { id: operationId, status: target, selectedLanguage: next.language, currentProposalRevision: next.revision, readyProposalRevision: next.readyRevision ?? null, expiresAt: new Date(next.exp).toISOString() }, proposal: input.currentProposal, signedProposalToken: this.sign(next) }
+  }
+
+  async convert(session: SessionClaims, operationId: string, input: { clientRequestId: string; currentProposal: AiPlanningProposal; signedProposalToken: string }, signal?: AbortSignal) {
+    const claims = this.assertProposal(session, operationId, this.verify<ProposalClaims>(input.signedProposalToken, 'AI_PROPOSAL_FORBIDDEN').revision, input.currentProposal, input.signedProposalToken, 'READY_FOR_CONVERSION')
+    if (claims.status !== 'READY_FOR_CONVERSION' || claims.readyRevision !== claims.revision || claims.readyChecksum !== claims.checksum) throw new ApiError(409, 'AI_PROPOSAL_NOT_READY', 'Accept a proposal revision before conversion.')
+    const key = `${claims.sessionHash}:${operationId}:convert:${input.clientRequestId}`
+    return this.cached(key, fingerprint({ readyRevision: claims.readyRevision, proposalChecksum: claims.checksum }), async () => {
+      let result
+      let prepared: ReturnType<typeof prepareVersionSnapshot> | undefined
+      let validationCategory: string | undefined
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        if (!this.provider.convertAcceptedProposalToPlan) throw new ApiError(503, 'AI_CONVERSION_UNAVAILABLE', 'The configured provider does not support plan conversion.')
+        result = await this.provider.convertAcceptedProposalToPlan(input.currentProposal, { language: claims.language, correlationId: input.clientRequestId, signal: signal ?? new AbortController().signal, approvedContext: claims.approvedContext, now: new Date(this.now()).toISOString(), repairReason: validationCategory }).catch((error) => { throw this.providerError(error) })
+        const validation = safeValidateCanonicalPlan(result.plan)
+        if (validation.success && validation.plan.schemaVersion === 8 && validation.plan.metadata.origin === 'ai') { prepared = prepareVersionSnapshot(validation.plan); break }
+        validationCategory = validation.success ? 'PROTECTED_METADATA' : validation.issues.slice(0, 8).map((item) => item.code).join(',')
+      }
+      if (!prepared) throw new ApiError(502, 'AI_CONVERSION_INVALID_OUTPUT', 'The provider returned an invalid plan structure.')
+      const token = this.sign({ v: 1, sessionHash: claims.sessionHash, operationId, readyRevision: claims.readyRevision!, planChecksum: prepared.checksum, exp: claims.exp } satisfies ConversionClaims)
+      return { status: 'PLAN_PREVIEW_READY' as const, preview: conversionPreview(prepared.snapshot, prepared.checksum, input.currentProposal), plan: prepared.snapshot, signedConversionToken: token }
+    })
   }
 
   private assertProposal(session: SessionClaims, operationId: string, revision: number, proposal: AiPlanningProposal, token: string, target: 'PROPOSED' | 'READY_FOR_CONVERSION' | 'REJECTED') {

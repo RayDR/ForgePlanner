@@ -47,8 +47,9 @@ discard it. The server's in-memory guest idempotency cache is not a security
 boundary and is unsuitable for multiple instances or billable providers.
 
 Every guest generation/refinement/ready/reject response rotates a signed token.
-The token contains only the guest-session hash, operation, revision, proposal
-checksum, language, status and expiry. Refinement and transitions validate the
+The proposal token contains only the guest-session hash, operation, revision,
+proposal checksum, language, status, approved structured planning controls and
+expiry; it contains neither the prompt nor a generated plan. Refinement and transitions validate the
 guest cookie, CSRF token, signature, operation/revision, strict proposal schema
 and canonical checksum before provider use. A token from another session or a
 previous revision is rejected. Ready and rejected states are server-validated.
@@ -84,8 +85,30 @@ prompts and responses are never logged. Configure:
 AI_PROVIDER=openai
 OPENAI_API_KEY=REPLACE_WITH_A_BACKEND_SECRET
 OPENAI_PROPOSAL_MODEL=gpt-5.6-sol
+OPENAI_CONVERSION_MODEL=gpt-5.6-sol
 OPENAI_TIMEOUT_MS=20000
 ```
 
 If `AI_PROVIDER` is absent it defaults to `mock`. If it is explicitly set to
 `openai`, a missing key is a startup configuration error.
+
+## Canonical plan conversion
+
+Accepting a proposal stores the exact immutable `readyProposalRevisionId`.
+Conversion reads that relation directly and never selects the latest revision.
+The provider returns only canonical plan JSON v8 through Structured Outputs.
+The server then runs strict Zod parsing, semantic validation, deterministic
+serialization, the 256 KiB size limit, and SHA-256 checksum validation. One
+repair attempt is permitted; invalid output is never persisted as a plan.
+
+Authenticated previews are stored on the owned `AiOperation`. Confirmation is
+server-first and transactional: `Plan` revision 1, `PlanVersion` revision 1
+with source `AI_GENERATION` and its nullable `aiOperationId`, completion audit,
+and the operation's `createdPlanId` are committed together. A retry returns the
+same plan.
+
+Guest conversion does not access PostgreSQL. The signed result contains only
+the operation identifier, accepted revision, checksum, expiry, and session
+binding—not the plan. The canonical plan remains in the existing scoped
+`sessionStorage` boundary, is displayed as local-only, and disappears with the
+browser session. Saving it to an account remains an explicit per-plan action.

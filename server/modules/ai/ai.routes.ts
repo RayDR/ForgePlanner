@@ -7,14 +7,15 @@ import { ApiError } from '../../http/errors.js'
 import { csrfProtection, requireAuth } from '../auth/auth.middleware.js'
 import { AiProposalService } from './ai.service.js'
 import { AiGuestService, AI_GUEST_COOKIE, AI_GUEST_CSRF_COOKIE } from './ai-guest.service.js'
-import { guestRefinementSchema, guestTransitionSchema, listSchema, planningInputSchema, refinementSchema, revisionSchema, transitionSchema } from './ai.schemas.js'
+import { confirmConversionSchema, conversionSchema, guestConversionSchema, guestRefinementSchema, guestTransitionSchema, listSchema, planningInputSchema, refinementSchema, revisionSchema, transitionSchema } from './ai.schemas.js'
 import { createAiProposalProvider } from './ai-provider.factory.js'
+import { AiPlanConversionService } from './ai-conversion.service.js'
 
 const identity = (request: import('express').Request) => ({ actorUserId: request.auth!.actorUserId, effectiveUserId: request.auth!.effectiveUserId, impersonationSessionId: request.auth!.impersonationSessionId, ipAddress: request.ip, userAgent: request.get('user-agent')?.slice(0, 500) })
 const controllerFor = (request: import('express').Request) => { const controller = new AbortController(); request.once('aborted', () => controller.abort()); return controller }
 
 export function aiProposalRoutes(db: PrismaClient, env: AppEnv) {
-  const router = Router(); const provider = createAiProposalProvider(env); const service = new AiProposalService(db, provider)
+  const router = Router(); const provider = createAiProposalProvider(env); const service = new AiProposalService(db, provider); const conversion = new AiPlanConversionService(db, provider)
   const guest = env.AI_GUEST_SESSION_SIGNING_KEY ? new AiGuestService(provider, env.AI_GUEST_SESSION_SIGNING_KEY) : null
   const authKey = (request: import('express').Request) => request.auth?.effectiveUserId ?? ipKeyGenerator(request.ip ?? 'unknown')
   const guestKey = (request: import('express').Request) => `${ipKeyGenerator(request.ip ?? 'unknown')}:${createHash('sha256').update(request.cookies?.[AI_GUEST_COOKIE] ?? 'none').digest('hex').slice(0, 20)}`
@@ -24,6 +25,9 @@ export function aiProposalRoutes(db: PrismaClient, env: AppEnv) {
   const readLimit = rateLimit({ windowMs: 60_000, limit: 120, keyGenerator: authKey, standardHeaders: true, legacyHeaders: false })
   const transitionLimit = rateLimit({ windowMs: 60_000, limit: 30, keyGenerator: authKey, standardHeaders: true, legacyHeaders: false })
   const guestTransitionLimit = rateLimit({ windowMs: 60_000, limit: 30, keyGenerator: guestKey, standardHeaders: true, legacyHeaders: false })
+  const conversionLimit = rateLimit({ windowMs: 15 * 60_000, limit: 6, keyGenerator: authKey, standardHeaders: true, legacyHeaders: false })
+  const guestConversionLimit = rateLimit({ windowMs: 15 * 60_000, limit: 3, keyGenerator: guestKey, standardHeaders: true, legacyHeaders: false })
+  const creationLimit = rateLimit({ windowMs: 15 * 60_000, limit: 6, keyGenerator: authKey, standardHeaders: true, legacyHeaders: false })
 
   router.post('/guest/session', (request, response) => {
     if (!guest) throw new ApiError(503, 'AI_GUEST_NOT_CONFIGURED', 'Guest proposal sessions are unavailable.')
@@ -35,6 +39,7 @@ export function aiProposalRoutes(db: PrismaClient, env: AppEnv) {
   router.post('/guest/plan-proposals/:operationId/refine', guestGenerationLimit, async (request, response) => { const controller = controllerFor(request); response.json(await guest!.refine(guestSession(request), String(request.params.operationId), guestRefinementSchema.parse(request.body), controller.signal)) })
   router.post('/guest/plan-proposals/:operationId/ready', guestTransitionLimit, (request, response) => { const session = guestSession(request); response.json(guest!.transition(session, String(request.params.operationId), guestTransitionSchema.parse(request.body), 'READY_FOR_CONVERSION')) })
   router.post('/guest/plan-proposals/:operationId/reject', guestTransitionLimit, (request, response) => { const session = guestSession(request); response.json(guest!.transition(session, String(request.params.operationId), guestTransitionSchema.parse(request.body), 'REJECTED')) })
+  router.post('/guest/plan-proposals/:operationId/convert', guestConversionLimit, async (request, response) => { const controller = controllerFor(request); response.json(await guest!.convert(guestSession(request), String(request.params.operationId), guestConversionSchema.parse(request.body), controller.signal)) })
 
   router.use(requireAuth)
   router.post('/plan-proposals', generationLimit, csrfProtection, async (request, response) => { const controller = controllerFor(request); response.status(201).json(await service.generate(request.auth!.effectiveUserId, planningInputSchema.parse(request.body), identity(request), controller.signal)) })
@@ -42,9 +47,12 @@ export function aiProposalRoutes(db: PrismaClient, env: AppEnv) {
   router.get('/plan-proposals/:operationId/revisions', readLimit, async (request, response) => response.json({ revisions: await service.revisions(request.auth!.effectiveUserId, String(request.params.operationId)) }))
   router.get('/plan-proposals/:operationId/revisions/:revision', readLimit, async (request, response) => response.json({ revision: await service.revision(request.auth!.effectiveUserId, String(request.params.operationId), revisionSchema.parse(request.params.revision)) }))
   router.get('/plan-proposals/:operationId', readLimit, async (request, response) => response.json(await service.get(request.auth!.effectiveUserId, String(request.params.operationId))))
+  router.get('/plan-proposals/:operationId/conversion', readLimit, async (request, response) => response.json(await conversion.get(request.auth!.effectiveUserId, String(request.params.operationId))))
   router.post('/plan-proposals/:operationId/refine', refinementLimit, csrfProtection, async (request, response) => { const controller = controllerFor(request); response.json(await service.refine(request.auth!.effectiveUserId, String(request.params.operationId), refinementSchema.parse(request.body), identity(request), controller.signal)) })
   router.post('/plan-proposals/:operationId/ready', transitionLimit, csrfProtection, async (request, response) => { const input = transitionSchema.parse(request.body); response.json(await service.transition(request.auth!.effectiveUserId, String(request.params.operationId), input.expectedRevision, 'READY_FOR_CONVERSION', identity(request))) })
   router.post('/plan-proposals/:operationId/reject', transitionLimit, csrfProtection, async (request, response) => { const input = transitionSchema.parse(request.body); response.json(await service.transition(request.auth!.effectiveUserId, String(request.params.operationId), input.expectedRevision, 'REJECTED', identity(request))) })
+  router.post('/plan-proposals/:operationId/convert', conversionLimit, csrfProtection, async (request, response) => { const controller = controllerFor(request); const input = conversionSchema.parse(request.body); response.json(await conversion.convert(request.auth!.effectiveUserId, String(request.params.operationId), input.clientRequestId, identity(request), controller.signal)) })
+  router.post('/plan-proposals/:operationId/create-plan', creationLimit, csrfProtection, async (request, response) => response.json(await conversion.confirm(request.auth!.effectiveUserId, String(request.params.operationId), confirmConversionSchema.parse(request.body), identity(request))))
   router.delete('/plan-proposals/:operationId', transitionLimit, csrfProtection, async (request, response) => response.json(await service.remove(request.auth!.effectiveUserId, String(request.params.operationId), identity(request))))
   return router
 }

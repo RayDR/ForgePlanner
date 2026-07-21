@@ -22,13 +22,14 @@ export class PlanRevisionService {
   async createInitial(tx: Prisma.TransactionClient, input: {
     ownerUserId: string
     snapshot: unknown
-    source: Extract<PlanVersionSource, 'USER' | 'IMPORT'>
+    source: Extract<PlanVersionSource, 'USER' | 'IMPORT' | 'AI_GENERATION'>
     identity: PlanAuditIdentity
     status?: string
     importKey?: string
     clientMutationId?: string
     auditAction: string
     auditMetadata?: SafeAuditMetadata
+    aiOperationId?: string
   }) {
     const prepared = prepareVersionSnapshot(input.snapshot)
     const plan = await tx.plan.create({
@@ -53,6 +54,7 @@ export class PlanRevisionService {
         effectiveUserId: input.identity.effectiveUserId,
         checksum: prepared.checksum,
         snapshotSizeBytes: prepared.snapshotSizeBytes,
+        aiOperationId: input.aiOperationId,
       },
     })
     await this.audit(tx, input.identity, input.auditAction, plan.id, { ...input.auditMetadata, revision: 1, versionId: version.id })

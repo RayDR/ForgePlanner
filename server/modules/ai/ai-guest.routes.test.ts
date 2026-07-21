@@ -12,7 +12,7 @@ const env = {
   COOKIE_SECURE: false, TRUST_PROXY: false, REGISTRATION_ENABLED: true, EMAIL_VERIFICATION_REQUIRED: false, RECAPTCHA_MIN_SCORE: 0.5,
   PASSWORD_RESET_TTL_MINUTES: 30, EMAIL_VERIFICATION_TTL_HOURS: 24, SMTP_PORT: 587, SMTP_SECURE: false,
   SMTP_FROM_NAME: 'NorthStar Planner', AI_GUEST_SESSION_SIGNING_KEY: 'guest-test-key-that-is-at-least-32-characters',
-  AI_PROVIDER: 'mock', OPENAI_PROPOSAL_MODEL: 'gpt-5.6-sol', OPENAI_TIMEOUT_MS: 20_000,
+  AI_PROVIDER: 'mock', OPENAI_PROPOSAL_MODEL: 'gpt-5.6-sol', OPENAI_CONVERSION_MODEL: 'gpt-5.6-sol', OPENAI_TIMEOUT_MS: 20_000,
 } satisfies AppEnv
 
 function guestApp() {
@@ -68,5 +68,16 @@ describe('guest AI proposal HTTP lifecycle', () => {
     await agent.post('/api/ai/guest/plan-proposals').set('x-ai-guest-csrf', initialized.body.csrfToken).send({
       clientRequestId: crypto.randomUUID(), goal: 'password=super-secret-value', preferredLanguage: 'en', locale: 'en', constraints: [], nonNegotiables: [], planIntensity: 'balanced',
     }).expect(400).expect(({ body }) => expect(body.error.code).toBe('AI_PROPOSAL_SENSITIVE_INPUT'))
+  })
+
+  it('converts an accepted guest proposal without PostgreSQL and returns a bounded signed result', async () => {
+    const agent = request.agent(guestApp()); const initialized = await agent.post('/api/ai/guest/session').expect(200); const csrf = initialized.body.csrfToken as string
+    const generated = await agent.post('/api/ai/guest/plan-proposals').set('x-ai-guest-csrf', csrf).send({ clientRequestId: crypto.randomUUID(), goal: 'Build a detailed six month backend engineering plan', durationMonths: 6, hoursPerWeek: 5, preferredLanguage: 'en', locale: 'en', constraints: [], nonNegotiables: [], planIntensity: 'balanced', planningScope: 'balanced', detailLevel: 'detailed', financialMode: 'none', continueWithAssumptions: true }).expect(201)
+    const ready = await agent.post(`/api/ai/guest/plan-proposals/${generated.body.operation.id}/ready`).set('x-ai-guest-csrf', csrf).send({ expectedRevision: 1, currentProposal: generated.body.proposal, signedProposalToken: generated.body.signedProposalToken }).expect(200)
+    const converted = await agent.post(`/api/ai/guest/plan-proposals/${generated.body.operation.id}/convert`).set('x-ai-guest-csrf', csrf).send({ clientRequestId: crypto.randomUUID(), currentProposal: ready.body.proposal, signedProposalToken: ready.body.signedProposalToken }).expect(200)
+    expect(converted.body).toMatchObject({ status: 'PLAN_PREVIEW_READY', plan: { schemaVersion: 8, metadata: { origin: 'ai', contentLanguage: 'en' } }, preview: { activitiesCount: expect.any(Number) } })
+    expect(converted.body.signedConversionToken).toBeTruthy()
+    const payload = JSON.parse(Buffer.from(String(converted.body.signedConversionToken).split('.')[0], 'base64url').toString('utf8'))
+    expect(payload).not.toHaveProperty('plan'); expect(payload).not.toHaveProperty('snapshot'); expect(payload.planChecksum).toBe(converted.body.preview.checksum)
   })
 })

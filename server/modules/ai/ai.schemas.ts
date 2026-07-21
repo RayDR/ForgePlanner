@@ -16,6 +16,10 @@ export const proposalInputSchema = z.object({
   currency: z.enum(['USD','MXN','CAD','EUR','GBP']).nullable().optional(), constraints: z.array(boundedText(300)).max(10).default([]), nonNegotiables: z.array(boundedText(300)).max(10).default([]),
   experienceLevel: z.enum(['beginner','intermediate','advanced']).nullable().optional(), preferredLanguage: z.enum(['auto','en','es']).default('auto'),
   planIntensity: z.enum(['light','balanced','ambitious']).default('balanced'), locale: z.enum(['en','es']).default('en'),
+  planningScope: z.enum(['focused','balanced','comprehensive']).optional(),
+  detailLevel: z.enum(['overview','detailed','step-by-step']).optional(),
+  financialMode: z.enum(['none','budget','savings']).optional(),
+  savingsGoal: z.number().min(0).max(1_000_000_000).nullable().optional(),
   conversation: z.array(conversationMessageSchema).max(8).default([]),
   clarificationCount: z.number().int().min(0).max(3).default(0),
   continueWithAssumptions: z.boolean().default(false),
@@ -33,5 +37,8 @@ export const listSchema = z.object({ page: z.coerce.number().int().positive().de
 export const revisionSchema = z.coerce.number().int().positive()
 export const guestRefinementSchema = refinementSchema.extend({ currentProposal: aiPlanningProposalSchema, signedProposalToken: z.string().min(40).max(4_096) }).strict()
 export const guestTransitionSchema = transitionSchema.extend({ currentProposal: aiPlanningProposalSchema, signedProposalToken: z.string().min(40).max(4_096) }).strict()
+export const conversionSchema = z.object({ clientRequestId: z.string().uuid() }).strict()
+export const confirmConversionSchema = z.object({ clientMutationId: z.string().uuid(), checksum: z.string().regex(/^[a-f0-9]{64}$/) }).strict()
+export const guestConversionSchema = conversionSchema.extend({ currentProposal: aiPlanningProposalSchema, signedProposalToken: z.string().min(40).max(4_096) }).strict()
 export type ProposalInput = z.infer<typeof proposalInputSchema>
 export type PlanningInput = z.infer<typeof planningInputSchema>

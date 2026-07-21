@@ -15,6 +15,6 @@ describe('production AI guest configuration', () => {
   it('uses deterministic mock mode by default and requires a backend key for OpenAI', () => {
     expect(loadEnv({ ...base }).AI_PROVIDER).toBe('mock')
     expect(() => loadEnv({ ...base, AI_PROVIDER: 'openai' })).toThrow(/OPENAI_API_KEY/)
-    expect(loadEnv({ ...base, AI_PROVIDER: 'openai', OPENAI_API_KEY: 'sk-test-key-that-stays-on-the-server' })).toMatchObject({ AI_PROVIDER: 'openai', OPENAI_PROPOSAL_MODEL: 'gpt-5.6-sol', OPENAI_TIMEOUT_MS: 20_000 })
+    expect(loadEnv({ ...base, AI_PROVIDER: 'openai', OPENAI_API_KEY: 'sk-test-key-that-stays-on-the-server' })).toMatchObject({ AI_PROVIDER: 'openai', OPENAI_PROPOSAL_MODEL: 'gpt-5.6-sol', OPENAI_CONVERSION_MODEL: 'gpt-5.6-sol', OPENAI_TIMEOUT_MS: 20_000 })
   })
 })
