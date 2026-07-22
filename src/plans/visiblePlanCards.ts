@@ -17,6 +17,7 @@ export function buildVisiblePlanCards(
   syncByPlanId: Record<string, PlanSyncMetadata>,
   guestScopeActive = true,
 ) {
+  void guestScopeActive
   const seen = new Set<string>()
   const cards: VisiblePlanCard[] = []
   for (const plan of accountPlans) {
@@ -27,7 +28,7 @@ export function buildVisiblePlanCards(
   for (const plan of guestPlans) {
     if (seen.has(plan.id) || plan.remoteId) continue
     const syncState = syncByPlanId[plan.id]?.state ?? 'local'
-    cards.push({ plan, source: 'guest-local', ownership: 'unowned-local', syncState, canOpen: guestScopeActive, canSync: ['local', 'failed', 'offline'].includes(syncState), canRetry: ['failed', 'offline'].includes(syncState) })
+    cards.push({ plan, source: 'guest-local', ownership: 'unowned-local', syncState, canOpen: true, canSync: ['local', 'failed', 'offline'].includes(syncState), canRetry: ['failed', 'offline'].includes(syncState) })
   }
   return cards
 }

@@ -15,6 +15,7 @@ import { PlanCategoryEditor } from '../ui/PlanCategoryEditor'
 import type { CategoryMeta } from '../types/roadmap'
 import { getCategoryMeta } from '../data/northstarMockData'
 import { useSession } from '../auth/SessionProvider'
+import { synchronizeGuestCommentAuthors } from '../activity/commentAuthor'
 import { LocalPlanMigration } from '../plans/LocalPlanMigration'
 import { PlanInvitations } from '../plans/PlanInvitations'
 import { PlanSharingDialog } from '../plans/PlanSharingDialog'
@@ -172,7 +173,7 @@ function PlanPreviewCarousel({ plan, years, locale, onOpenYear, onOpenMonth }: {
           <button type="button" className="plan-preview-month-detail" onClick={() => onOpenMonth(plan, month.id)}>
             <strong>{month.label} {month.year}</strong>
             <span>{month.count} {labels.activities} · {month.progress}%</span>
-            <small>{plan.snapshot.activities.filter((activity) => activity.monthlyEntries[month.id]).slice(0, 3).map((activity) => activity.title).join(' · ') || labels.noActivities}</small>
+            <small>{activitiesForMonth(plan.snapshot.activities, month.id).slice(0, 3).map((activity) => activity.title).join(' · ') || labels.noActivities}</small>
           </button>
         ) : year ? (
           <div className="plan-preview-year-single">
@@ -205,6 +206,7 @@ export function PlansHomeView() {
   const archivedPlanIds = useForgePlannerStore((state) => state.archivedPlanIds)
   const deletedPlans = useForgePlannerStore((state) => state.deletedPlans)
   const openPlan = useForgePlannerStore((state) => state.openPlan)
+  const openGuestPlan = useForgePlannerStore((state) => state.openGuestPlan)
   const quickEditPlan = useForgePlannerStore((state) => state.quickEditPlan)
   const duplicatePlan = useForgePlannerStore((state) => state.duplicatePlan)
   const archivePlan = useForgePlannerStore((state) => state.archivePlan)
@@ -256,7 +258,10 @@ export function PlansHomeView() {
     () => plans.filter((plan) => !archivedPlanIds.includes(plan.id)),
     [plans, archivedPlanIds],
   )
-  const visiblePlanCards = useMemo(() => buildVisiblePlanCards(activePlans, guestLocalPlans, syncByPlanId, !session), [activePlans, guestLocalPlans, session, syncByPlanId])
+  const visiblePlanCards = useMemo(() => {
+    const guestIds = new Set(guestLocalPlans.map((plan) => plan.id))
+    return buildVisiblePlanCards(activePlans.filter((plan) => !guestIds.has(plan.id)), guestLocalPlans, syncByPlanId, !session)
+  }, [activePlans, guestLocalPlans, session, syncByPlanId])
   const archivedPlans = useMemo(() => plans.filter((plan) => archivedPlanIds.includes(plan.id)), [plans, archivedPlanIds])
 
   useEffect(() => {
@@ -328,19 +333,24 @@ export function PlansHomeView() {
     return next
   }, [locale, visiblePlanCards])
 
+  function activatePlan(plan: ForgePlan) {
+    if (guestLocalPlans.some((item) => item.id === plan.id)) openGuestPlan(plan)
+    else openPlan(plan.id)
+  }
+
   function openSelectedPlan(plan: ForgePlan) {
-    openPlan(plan.id)
+    activatePlan(plan)
     navigate(`/plans/${plan.id}/roadmap`)
   }
 
   function openPlanYear(plan: ForgePlan, year: number) {
-    openPlan(plan.id)
+    activatePlan(plan)
     setSelectedYear(year)
     navigate(`/plans/${plan.id}/roadmap?year=${year}`)
   }
 
   function openPlanMonth(plan: ForgePlan, monthId: string) {
-    openPlan(plan.id)
+    activatePlan(plan)
     navigate(`/plans/${plan.id}/monthly/${monthId}`, { state: { highlightMonthId: monthId } })
   }
 
@@ -450,7 +460,7 @@ export function PlansHomeView() {
     const clientMutationId = syncByPlanId[plan.id]?.clientMutationId ?? crypto.randomUUID()
     setSavingLocalId(plan.id); setPlanSync(plan.id, { state: 'saving', clientMutationId })
     try {
-      const result = await planApi.create(plan, clientMutationId)
+      const result = await planApi.create(synchronizeGuestCommentAuthors(plan, session), clientMutationId)
       if (!isCurrentScope(scope, generation)) return
       if (guestLocalPlans.some((item) => item.id === plan.id)) {
         removeImportedGuestPlans([plan]); setGuestLocalPlans((items) => items.filter((item) => item.id !== plan.id))

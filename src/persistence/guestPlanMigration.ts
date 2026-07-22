@@ -1,7 +1,7 @@
 import type { ForgePlan, ForgePlannerState } from '../types/forgePlanner'
 import { GUEST_SCOPE } from './identityScope'
 import { readScopedPersistedState, writeScopedPersistedState } from './scopedStorage'
-import { readGuestGeneratedPlans, removeGuestGeneratedPlans } from '../ai/guestGeneratedPlanStorage'
+import { readGuestGeneratedPlans, removeGuestGeneratedPlans, saveGuestGeneratedPlan } from '../ai/guestGeneratedPlanStorage'
 
 const PLANNER_STORE_NAME = 'forge-planner-state'
 const PLANNER_STORE_VERSION = 1
@@ -23,6 +23,22 @@ export function removeImportedGuestPlans(importedPlans: Pick<ForgePlan, 'id'>[])
       plans: guestState.plans.filter((plan) => !importedIds.has(plan.id)),
     }, PLANNER_STORE_VERSION)
   if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') window.dispatchEvent(new Event(GUEST_PLANS_EVENT))
+}
+
+export function updateGuestPlanCandidate(plan: ForgePlan) {
+  if (readGuestGeneratedPlans().some((item) => item.id === plan.id)) {
+    saveGuestGeneratedPlan(plan)
+    if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') window.dispatchEvent(new Event(GUEST_PLANS_EVENT))
+    return true
+  }
+  const guestState = readScopedPersistedState<ForgePlannerState>(GUEST_SCOPE, PLANNER_STORE_NAME)
+  if (!guestState || !guestState.plans.some((item) => item.id === plan.id)) return false
+  writeScopedPersistedState(GUEST_SCOPE, PLANNER_STORE_NAME, {
+    ...guestState,
+    plans: guestState.plans.map((item) => item.id === plan.id ? plan : item),
+  }, PLANNER_STORE_VERSION)
+  if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') window.dispatchEvent(new Event(GUEST_PLANS_EVENT))
+  return true
 }
 
 export function subscribeGuestPlanCandidates(listener: () => void) {

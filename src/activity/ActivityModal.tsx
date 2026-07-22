@@ -10,16 +10,20 @@ import {
   LockIcon,
   MoreVerticalIcon,
   PlusIcon,
+  InfoIcon,
   Trash2Icon,
 } from '../ui/icons'
 import { getActivityMonthIds, getCalculatedActivityProgress } from '../utils/roadmapModel'
-import type { ActivityColorKey } from '../types/roadmap'
 import { RecurrenceSelect } from '../ui/RecurrenceSelect'
+import { ColorPicker } from '../ui/ColorPicker'
+import { customColorClass } from '../ui/customColor'
 import { readActivityDraft, writeActivityDraft } from '../persistence/activityDraftStorage'
-
-const COLOR_OPTIONS: ActivityColorKey[] = ['slate', 'blue', 'green', 'amber', 'rose']
+import { useSession } from '../auth/SessionProvider'
+import { resolveCommentAuthor } from './commentAuthor'
+import { readActivityViewPreference, writeActivityViewPreference, type ActivityViewMode } from '../persistence/activityViewPreference'
 
 export function ActivityModal() {
+  const { session } = useSession()
   const navigate = useNavigate()
   const { planId } = useParams()
   const activities = useRoadmapStore((state) => state.activities)
@@ -45,8 +49,8 @@ export function ActivityModal() {
   )
 
   const [subtaskDraft, setSubtaskDraft] = useState('')
-  const [commentAuthor, setCommentAuthor] = useState('')
   const [commentMessage, setCommentMessage] = useState('')
+  const [viewMode, setViewMode] = useState<ActivityViewMode>(readActivityViewPreference)
   const [activityTab, setActivityTab] = useState<'all' | 'comments' | 'history' | 'worklog'>('comments')
   const [visibleItems, setVisibleItems] = useState(3)
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -56,6 +60,7 @@ export function ActivityModal() {
   const [draggedSubtaskId, setDraggedSubtaskId] = useState<string | null>(null)
   const [subtaskActionsId, setSubtaskActionsId] = useState<string | null>(null)
   const [statusMenuOpen, setStatusMenuOpen] = useState(false)
+  const [categoryEditing, setCategoryEditing] = useState(false)
   const [draftActivityId, setDraftActivityId] = useState<string | null>(null)
   const subtaskDraftRef = useRef<HTMLInputElement>(null)
 
@@ -63,13 +68,13 @@ export function ActivityModal() {
     const draftPlanId = planId ?? project.id
     const savedDraft = activity?.id ? readActivityDraft(draftPlanId, activity.id) : null
     const parsedDraft = (() => {
-      try { return savedDraft ? JSON.parse(savedDraft) as { subtask?: string; author?: string; comment?: string; linkedQuery?: string } : null } catch { return null }
+      try { return savedDraft ? JSON.parse(savedDraft) as { subtask?: string; comment?: string; linkedQuery?: string } : null } catch { return null }
     })()
     // Reset editor state when a different persisted activity is opened.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setSubtaskDraft(parsedDraft?.subtask ?? '')
-    setCommentAuthor(parsedDraft?.author ?? '')
     setCommentMessage(parsedDraft?.comment ?? '')
+    setViewMode(readActivityViewPreference())
     setActivityTab('comments')
     setVisibleItems(3)
     setSettingsOpen(false)
@@ -79,13 +84,14 @@ export function ActivityModal() {
     setDraggedSubtaskId(null)
     setSubtaskActionsId(null)
     setStatusMenuOpen(false)
+    setCategoryEditing(false)
     setDraftActivityId(activity?.id ?? null)
   }, [activity?.id, planId, project.id])
 
   useEffect(() => {
     if (!activity?.id || draftActivityId !== activity.id) return
-    writeActivityDraft(planId ?? project.id, activity.id, JSON.stringify({ subtask: subtaskDraft, author: commentAuthor, comment: commentMessage, linkedQuery: linkedTaskQuery }))
-  }, [activity?.id, draftActivityId, subtaskDraft, commentAuthor, commentMessage, linkedTaskQuery, planId, project.id])
+    writeActivityDraft(planId ?? project.id, activity.id, JSON.stringify({ subtask: subtaskDraft, comment: commentMessage, linkedQuery: linkedTaskQuery }))
+  }, [activity?.id, draftActivityId, subtaskDraft, commentMessage, linkedTaskQuery, planId, project.id])
 
   if (!activity) {
     return null
@@ -114,6 +120,7 @@ export function ActivityModal() {
     const linked = activities.find((item) => item.id === id)
     return linked ? [linked] : []
   })
+  const commentAuthor = resolveCommentAuthor(session)
   const relationshipModeLabel = locale === 'es'
     ? ({ independent: 'Independiente', 'soft-linked': 'Vinculación flexible', 'locked-sequence': 'Secuencia bloqueada' }[activity.relationshipMode] ?? activity.relationshipMode)
     : ({ independent: 'Independent', 'soft-linked': 'Soft linked', 'locked-sequence': 'Locked sequence' }[activity.relationshipMode] ?? activity.relationshipMode)
@@ -123,9 +130,9 @@ export function ActivityModal() {
     ...activity.history.map((entry) => ({ id: `history-${entry.id}`, kind: 'history' as const, occurredAt: entry.occurredAt, title: entry.type, message: entry.message })),
   ].sort((left, right) => new Date(right.occurredAt).getTime() - new Date(left.occurredAt).getTime())
   const t = locale === 'es' ? {
-    settings: 'Configuración de tarea', category: 'Categoría', weighting: 'Usar ponderación de subtareas', color: 'Color', title: 'Título', description: 'Descripción', progress: 'Progreso calculado', completedTasks: 'Basado en tareas completadas', status: 'Estado', transition: 'Cambiar a', overview: 'Resumen', projectTiming: 'Fechas del proyecto', plannedEnd: 'Fin planeado', actualEnd: 'Fin real', completed: 'Completado', notCompleted: 'No completado', extended: 'El plan supera la fecha de fin planeada.', details: 'Detalles de actividad', startDate: 'Fecha de inicio', endDate: 'Fecha de fin', openEnded: 'Sin fecha de fin', hours: 'Horas estimadas', budget: 'Impacto presupuestario', savings: 'Impacto en ahorro', relationships: 'Relaciones', mode: 'Modo', dependencies: 'Dependencias', linked: 'Tareas vinculadas', sequence: 'Grupo de secuencia', parent: 'Objetivo principal', none: 'Ninguno', timeline: 'Cronología mensual', subtasks: 'Subtareas', duplicate: 'Duplicar', copy: 'Copiar texto', delete: 'Eliminar', addSubtask: 'Nombre de la subtarea', searchTasks: 'Buscar tareas existentes', noDescription: 'Sin descripción', noMatches: 'No hay coincidencias', remove: 'Quitar', activity: 'Actividad', all: 'Todo', comments: 'Comentarios', history: 'Historial', worklog: 'Registro de trabajo', author: 'Autor', message: 'Mensaje', addComment: 'Agregar comentario', readMore: 'Ver más', openPlanner: 'Abrir plan mensual', closeSidebar: 'Cerrar panel de tarea', openSidebar: 'Abrir panel de tarea', markComplete: 'Marcar subtarea como completada', markIncomplete: 'Marcar subtarea como pendiente', actions: 'Acciones de subtarea', milestone: 'hito', weighted: 'ponderado', setColor: 'Cambiar color', repeat: 'Repetir', noRepeat: 'No repetir', repeatUntil: 'Repetir hasta',
+    settings: 'Configuración de tarea', category: 'Categoría', editCategory: 'Doble clic para cambiar la categoría', weighting: 'Usar ponderación de subtareas', color: 'Color', title: 'Título', description: 'Descripción', progress: 'Progreso calculado', completedTasks: 'Basado en subtareas completadas', status: 'Estado', transition: 'Cambiar a', overview: 'Resumen', projectTiming: 'Fechas del proyecto', plannedEnd: 'Fin planeado', actualEnd: 'Fin real', completed: 'Completado', notCompleted: 'No completado', extended: 'El plan supera la fecha de fin planeada.', details: 'Detalles de actividad', startDate: 'Fecha de inicio', endDate: 'Fecha de fin', openEnded: 'Sin fecha de fin', hours: 'Horas estimadas', budget: 'Impacto presupuestario', savings: 'Impacto en ahorro', relationships: 'Relaciones', mode: 'Modo', dependencies: 'Dependencias', linked: 'Tareas vinculadas', sequence: 'Grupo de secuencia', parent: 'Objetivo principal', none: 'Ninguno', timeline: 'Cronología mensual', subtasks: 'Subtareas', duplicate: 'Duplicar', copy: 'Copiar texto', delete: 'Eliminar', addSubtask: 'Nombre de la subtarea', searchTasks: 'Buscar tareas existentes', noDescription: 'Sin descripción', noMatches: 'No hay coincidencias', remove: 'Quitar', activity: 'Actividad', all: 'Todo', comments: 'Comentarios', history: 'Historial', worklog: 'Registro de trabajo', author: 'Autor', message: 'Mensaje', addComment: 'Agregar comentario', readMore: 'Ver más', openPlanner: 'Abrir plan mensual', closeSidebar: 'Cerrar panel de tarea', openSidebar: 'Abrir panel de tarea', markComplete: 'Marcar subtarea como completada', markIncomplete: 'Marcar subtarea como pendiente', actions: 'Acciones de subtarea', milestone: 'hito', weighted: 'ponderado', setColor: 'Escoger color', repeat: 'Repetir', noRepeat: 'No repetir', repeatUntil: 'Repetir hasta', simpleView: 'Vista simple', advancedView: 'Vista avanzada', displayMode: 'Diseño del modal', guestAuthorInfo: 'Inicia sesión para registrar los comentarios con tu nombre. Mientras tanto usaremos este identificador de sesión.',
   } : {
-    settings: 'Task settings', category: 'Category', weighting: 'Use subtask weighting', color: 'Color', title: 'Title', description: 'Description', progress: 'Calculated progress', completedTasks: 'Based on completed tasks', status: 'Status', transition: 'Transition to', overview: 'Overview', projectTiming: 'Project timing', plannedEnd: 'Planned end', actualEnd: 'Actual end', completed: 'Completed', notCompleted: 'Not completed', extended: 'Plan extended beyond the planned end date.', details: 'Activity details', startDate: 'Start date', endDate: 'End date', openEnded: 'Open ended', hours: 'Estimated hours', budget: 'Budget impact', savings: 'Savings impact', relationships: 'Relationships', mode: 'Mode', dependencies: 'Dependencies', linked: 'Linked tasks', sequence: 'Sequence group', parent: 'Parent goal', none: 'None', timeline: 'Monthly timeline', subtasks: 'Subtasks', duplicate: 'Duplicate', copy: 'Copy text', delete: 'Delete', addSubtask: 'Name this subtask', searchTasks: 'Search existing tasks', noDescription: 'No description', noMatches: 'No matching tasks', remove: 'Remove', activity: 'Activity', all: 'All', comments: 'Comments', history: 'History', worklog: 'Work log', author: 'Author', message: 'Message', addComment: 'Add comment', readMore: 'Read more', openPlanner: 'Open monthly planner', closeSidebar: 'Close task sidebar', openSidebar: 'Open task sidebar', markComplete: 'Mark subtask complete', markIncomplete: 'Mark subtask incomplete', actions: 'Subtask actions', milestone: 'milestone', weighted: 'weighted', setColor: 'Set color', repeat: 'Repeat', noRepeat: 'Do not repeat', repeatUntil: 'Repeat until',
+    settings: 'Task settings', category: 'Category', editCategory: 'Double-click to change category', weighting: 'Use subtask weighting', color: 'Color', title: 'Title', description: 'Description', progress: 'Calculated progress', completedTasks: 'Based on completed subtasks', status: 'Status', transition: 'Transition to', overview: 'Overview', projectTiming: 'Project timing', plannedEnd: 'Planned end', actualEnd: 'Actual end', completed: 'Completed', notCompleted: 'Not completed', extended: 'Plan extended beyond the planned end date.', details: 'Activity details', startDate: 'Start date', endDate: 'End date', openEnded: 'Open ended', hours: 'Estimated hours', budget: 'Budget impact', savings: 'Savings impact', relationships: 'Relationships', mode: 'Mode', dependencies: 'Dependencies', linked: 'Linked tasks', sequence: 'Sequence group', parent: 'Parent goal', none: 'None', timeline: 'Monthly timeline', subtasks: 'Subtasks', duplicate: 'Duplicate', copy: 'Copy text', delete: 'Delete', addSubtask: 'Name this subtask', searchTasks: 'Search existing tasks', noDescription: 'No description', noMatches: 'No matching tasks', remove: 'Remove', activity: 'Activity', all: 'All', comments: 'Comments', history: 'History', worklog: 'Work log', author: 'Author', message: 'Message', addComment: 'Add comment', readMore: 'Read more', openPlanner: 'Open monthly planner', closeSidebar: 'Close task sidebar', openSidebar: 'Open task sidebar', markComplete: 'Mark subtask complete', markIncomplete: 'Mark subtask incomplete', actions: 'Subtask actions', milestone: 'milestone', weighted: 'weighted', setColor: 'Choose color', repeat: 'Repeat', noRepeat: 'Do not repeat', repeatUntil: 'Repeat until', simpleView: 'Simple view', advancedView: 'Advanced view', displayMode: 'Modal layout', guestAuthorInfo: 'Sign in to attach your name to comments. Until then, this session identifier is used.',
   }
 
   function dropSubtask(targetId: string) {
@@ -163,7 +170,7 @@ export function ActivityModal() {
     }
 
     addComment(currentActivity.id, {
-      author: commentAuthor.trim() || (locale === 'es' ? 'Tú' : 'You'),
+      author: commentAuthor,
       message: commentMessage,
     })
     setCommentMessage('')
@@ -176,6 +183,43 @@ export function ActivityModal() {
 
     closeActivity()
     navigate(`/plans/${planId}/monthly/${selectedPlannerMonth}`)
+  }
+
+  function categoryControl() {
+    if (categoryEditing) {
+      return (
+        <select
+          autoFocus
+          className="field-input activity-label-editor"
+          aria-label={t.category}
+          value={currentActivity.category}
+          onBlur={() => setCategoryEditing(false)}
+          onChange={(event) => {
+            updateActivity(currentActivity.id, { category: event.target.value })
+            setCategoryEditing(false)
+          }}
+          onKeyDown={(event) => {
+            if (event.key === 'Escape') setCategoryEditing(false)
+          }}
+        >
+          {availableCategories.map((category) => <option key={category.key} value={category.key}>{category.label}</option>)}
+        </select>
+      )
+    }
+
+    return (
+      <button
+        type="button"
+        className={`activity-label activity-label-${currentActivity.colorKey} ${customColorClass(currentActivity.colorHex)}`}
+        title={t.editCategory}
+        onDoubleClick={() => setCategoryEditing(true)}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' || event.key === 'F2') setCategoryEditing(true)
+        }}
+      >
+        {categoryLabel}
+      </button>
+    )
   }
 
   return (
@@ -191,6 +235,7 @@ export function ActivityModal() {
           <button type="button" className="btn btn-ghost activity-settings-trigger" aria-label={t.settings} aria-expanded={settingsOpen} onClick={() => setSettingsOpen((open) => !open)}><MoreVerticalIcon width={18} height={18} /></button>
           {settingsOpen ? <div className="activity-settings-popover">
             <strong>{t.settings}</strong>
+            <fieldset className="activity-view-setting"><legend>{t.displayMode}</legend><button type="button" className={viewMode === 'simple' ? 'is-active' : ''} onClick={() => { setViewMode('simple'); writeActivityViewPreference('simple') }}>{t.simpleView}</button><button type="button" className={viewMode === 'advanced' ? 'is-active' : ''} onClick={() => { setViewMode('advanced'); writeActivityViewPreference('advanced') }}>{t.advancedView}</button></fieldset>
             <label className="field-wrap"><span>{t.category}</span><select className="field-input" value={activity.category} onChange={(event) => updateActivity(activity.id, { category: event.target.value })}>{availableCategories.map((category) => <option key={category.key} value={category.key}>{category.label}</option>)}</select></label>
             <div className="form-grid form-grid-compact">
               <label className="field-wrap"><span>{t.startDate}</span><input className="field-input" type="date" value={activity.startDate} onChange={(event) => updateActivity(activity.id, { startDate: event.target.value })} /></label>
@@ -199,17 +244,63 @@ export function ActivityModal() {
             <label className="field-wrap"><span>{t.repeat}</span><RecurrenceSelect locale={locale} value={activity.recurrence?.frequency ?? 'none'} startDate={activity.startDate} maximumEndDate={project.endDate} onChange={(frequency) => updateActivity(activity.id, { recurrence: frequency === 'none' ? undefined : { frequency, endDate: activity.recurrence?.endDate ?? project.endDate } })} /></label>
             {activity.recurrence ? <label className="field-wrap"><span>{t.repeatUntil}</span><input className="field-input" type="date" min={activity.startDate} max={project.endDate} value={activity.recurrence.endDate} onChange={(event) => updateActivity(activity.id, { recurrence: { ...activity.recurrence!, endDate: event.target.value } })} /></label> : null}
             <label className="progress-mode-toggle"><input type="checkbox" checked={usesWeightedProgress} onChange={(event) => updateActivity(activity.id, { progressMode: event.target.checked ? 'weighted' : 'completion' })} /><span>{t.weighting}</span></label>
-            <span className="settings-label">{t.color}</span>
-            <div className="color-palette color-palette-compact">{COLOR_OPTIONS.map((colorKey) => <button key={colorKey} type="button" className={activity.colorKey === colorKey ? `color-dot color-dot-${colorKey} is-active` : `color-dot color-dot-${colorKey}`} onClick={() => updateActivity(activity.id, { colorKey })} aria-label={`${t.setColor}: ${colorKey}`} />)}</div>
+            <ColorPicker value={activity.colorHex} fallback={activity.colorKey} label={t.setColor} onChange={({ colorHex, colorKey }) => updateActivity(activity.id, { colorHex, colorKey })} />
           </div> : null}
         </div>
       </>}
     >
-      <div className={`activity-modal activity-modal-${activity.colorKey}`}>
+      {viewMode === 'simple' ? (
+      <div className={`activity-simple activity-simple-${activity.colorKey} ${customColorClass(activity.colorHex)}`}>
+        <section className="activity-simple-main">
+          <div className="activity-simple-meta">
+            {categoryControl()}
+            <span>{activity.startDate} → {activity.endDate ?? t.openEnded}</span>
+          </div>
+          <input className="activity-simple-title" aria-label={t.title} value={activity.title} onChange={(event) => updateActivity(activity.id, { title: event.target.value })} />
+          <textarea className="activity-simple-description" aria-label={t.description} placeholder={t.description} value={activity.description} onChange={(event) => updateActivity(activity.id, { description: event.target.value })} />
+          <div className="activity-simple-progress">
+            <div><span>{t.progress}</span><strong>{calculatedProgress}%</strong></div>
+            <progress max="100" value={calculatedProgress}>{calculatedProgress}%</progress>
+            <small>{usesWeightedProgress && activity.subtasks.length ? `${completedWeight} / ${totalWeight} ${t.weighted}` : t.completedTasks}</small>
+          </div>
+        </section>
+
+        <aside className="activity-simple-status">
+          <span>{t.status}</span>
+          <button type="button" className="status-transition-trigger" aria-expanded={statusMenuOpen} onClick={() => setStatusMenuOpen((open) => !open)}>{statuses.find((status) => status.id === activity.statusId)?.label ?? t.status}<ChevronDownIcon width={13} height={13} /></button>
+          {statusMenuOpen ? <div className="status-transition-menu" role="menu">{statuses.filter((status) => status.id !== activity.statusId).map((status) => <button key={status.id} type="button" role="menuitem" onClick={() => { setActivityStatus(activity.id, status.id); setStatusMenuOpen(false) }}><span>{t.transition}</span><ChevronRightIcon width={13} height={13} /><strong className={`badge badge-${status.colorKey}`}>{status.label}</strong></button>)}</div> : null}
+        </aside>
+
+        <section className="activity-simple-section activity-simple-subtasks">
+          <header><h3>{t.subtasks}</h3><span>{activity.subtasks.filter((subtask) => subtask.completed).length}/{activity.subtasks.length}</span></header>
+          <ul className="activity-simple-subtask-list">
+            {activity.subtasks.map((subtask) => <li key={subtask.id} draggable onDragStart={(event) => { setDraggedSubtaskId(subtask.id); event.dataTransfer.effectAllowed = 'move' }} onDragOver={(event) => event.preventDefault()} onDrop={() => dropSubtask(subtask.id)} onDragEnd={() => setDraggedSubtaskId(null)} className={draggedSubtaskId === subtask.id ? 'is-dragging' : ''}>
+              <button type="button" className={subtask.completed ? 'subtask-complete is-complete' : 'subtask-complete'} aria-label={subtask.completed ? t.markIncomplete : t.markComplete} aria-pressed={subtask.completed} onClick={() => toggleSubtask(activity.id, subtask.id, !subtask.completed)}>{subtask.completed ? '✓' : ''}</button>
+              <input className="field-input field-input-inline" value={subtask.title} onChange={(event) => editSubtask(activity.id, subtask.id, event.target.value)} />
+              {usesWeightedProgress ? <label className="subtask-points"><span>{locale === 'es' ? 'Peso' : 'Weight'}</span><input type="number" min={1} max={100} value={subtask.weight ?? 1} onChange={(event) => updateSubtaskWeight(activity.id, subtask.id, Number(event.target.value || 1))} /></label> : null}
+              <button type="button" className="activity-simple-delete" aria-label={t.delete} onClick={() => deleteSubtask(activity.id, subtask.id)}><Trash2Icon width={14} height={14} /></button>
+            </li>)}
+          </ul>
+          <div className="activity-inline-form"><button type="button" className="btn btn-ghost" onClick={handleAddSubtask} aria-label={t.addSubtask}><PlusIcon width={16} height={16} /></button><input ref={subtaskDraftRef} className="field-input field-input-inline" placeholder={t.addSubtask} value={subtaskDraft} onChange={(event) => setSubtaskDraft(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') handleAddSubtask() }} /></div>
+        </section>
+
+        <section className="activity-simple-section activity-simple-comments">
+          <header><h3>{t.comments}</h3><span>{activity.comments.length}</span></header>
+          <div className="activity-simple-comment-compose">
+            <div className="activity-comment-author-value"><strong>{commentAuthor}</strong>{!session ? <button type="button" aria-label={t.guestAuthorInfo} title={t.guestAuthorInfo}><InfoIcon width={15} height={15} /></button> : null}</div>
+            <input className="field-input" value={commentMessage} aria-label={t.message} placeholder={t.message} onChange={(event) => setCommentMessage(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') handleAddComment() }} />
+            <button className="btn btn-secondary" type="button" onClick={handleAddComment} disabled={!commentMessage.trim()}><PlusIcon width={14} height={14} /><span>{t.addComment}</span></button>
+          </div>
+          <ul className="comment-list">{activity.comments.slice(0, visibleItems).map((comment) => <li key={comment.id} className="comment-row"><div><strong>{comment.author}</strong><p>{comment.message}</p><small>{new Date(comment.createdAt).toLocaleString()}</small></div><button className="btn btn-ghost" type="button" onClick={() => deleteComment(activity.id, comment.id)} aria-label={t.delete}><Trash2Icon width={14} height={14} /></button></li>)}</ul>
+          {activity.comments.length > visibleItems ? <button type="button" className="btn btn-ghost activity-read-more" onClick={() => setVisibleItems((count) => count + 3)}>{t.readMore}</button> : null}
+        </section>
+      </div>
+      ) : (
+      <div className={`activity-modal activity-modal-${activity.colorKey} activity-modal--${viewMode} ${customColorClass(activity.colorHex)}`}>
         <section className="activity-hero">
           <div className="activity-hero-top">
             <div className="activity-hero-meta">
-              <span className={`activity-label activity-label-${activity.colorKey}`}>{categoryLabel}</span>
+              {categoryControl()}
               {activity.milestone ? <span className="badge badge-amber">{t.milestone}</span> : null}
             </div>
           </div>
@@ -328,10 +419,11 @@ export function ActivityModal() {
             </div>
             {activityTab === 'comments' ? <>
             <div className="form-grid form-grid-compact activity-comment-form">
-              <label className="field-wrap">
+              <div className="field-wrap">
                 <span>{t.author}</span>
-                <input className="field-input" value={commentAuthor} onChange={(event) => setCommentAuthor(event.target.value)} />
-              </label>
+                <div className="activity-comment-author-value"><strong>{commentAuthor}</strong>{!session ? <button type="button" aria-label={t.guestAuthorInfo} title={t.guestAuthorInfo}><InfoIcon width={15} height={15} /></button> : null}</div>
+                {!session ? <small>{t.guestAuthorInfo}</small> : null}
+              </div>
               <label className="field-wrap activity-comment-message">
                 <span>{t.message}</span>
                 <input className="field-input" value={commentMessage} onChange={(event) => setCommentMessage(event.target.value)} />
@@ -387,6 +479,7 @@ export function ActivityModal() {
           </article>
         </section>
       </div>
+      )}
     </Modal>
   )
 }

@@ -5,7 +5,7 @@ import type {
   MonthlySavingsEntry,
   Project,
 } from '../types/roadmap'
-import { getMonthId, getMonthIdsBetween, toDate } from './dateUtils'
+import { activityTouchesMonth, getMonthId, getMonthIdsBetween, toDate } from './dateUtils'
 
 export const monthlyStatusOrder: MonthlyActivityStatus[] = [
   'planned',
@@ -142,13 +142,21 @@ export function getLatestMonthlyEntry(activity: Pick<Activity, 'monthlyEntries'>
   return latestMonthId ? activity.monthlyEntries[latestMonthId] : undefined
 }
 
-export function getActivityGlobalStatus(activity: Activity): MonthlyActivityStatus {  return getLatestMonthlyEntry(activity)?.status ?? 'planned'; }
+export function getActivityGlobalStatus(activity: Activity): MonthlyActivityStatus {
+  return getLatestMonthlyEntry(activity)?.status ?? 'planned'
+}
 
-export function getCalculatedActivityProgress(activity: Activity) {  if (activity.progressMode === 'weighted' && activity.subtasks.length) {    const totalPoints = activity.subtasks.reduce((sum, subtask) => sum + Math.max(1, subtask.weight ?? 1), 0);
-    const completedPoints = activity.subtasks.reduce((sum, subtask) => sum + (subtask.completed ? Math.max(1, subtask.weight ?? 1) : 0), 0);
-    return totalPoints ? Math.round((completedPoints / totalPoints) * 100) : 0;
+export function getCalculatedActivityProgress(activity: Activity) {
+  if (activity.subtasks.length) {
+    if (activity.progressMode === 'weighted') {
+      const totalPoints = activity.subtasks.reduce((sum, subtask) => sum + Math.max(1, subtask.weight ?? 1), 0)
+      const completedPoints = activity.subtasks.reduce((sum, subtask) => sum + (subtask.completed ? Math.max(1, subtask.weight ?? 1) : 0), 0)
+      return totalPoints ? Math.round((completedPoints / totalPoints) * 100) : 0
+    }
+    const completedTasks = activity.subtasks.filter((subtask) => subtask.completed).length
+    return Math.round((completedTasks / activity.subtasks.length) * 100)
   }
-  return activity.statusId === 'done' || activity.statusId === 'completed' || getActivityGlobalStatus(activity) === 'completed' ? 100 : 0;
+  return activity.statusId === 'done' || activity.statusId === 'completed' || getActivityGlobalStatus(activity) === 'completed' ? 100 : 0
 }
 
 export function getActivityGlobalProgress(activity: Activity) {
@@ -156,11 +164,17 @@ export function getActivityGlobalProgress(activity: Activity) {
 }
 
 export function getActivityStatusForMonth(activity: Activity, monthId: string) {
-  return activity.monthlyEntries[monthId]?.status
+  const entryStatus = activity.monthlyEntries[monthId]?.status
+  if (entryStatus) return entryStatus
+  if (!activityTouchesMonth(activity, monthId)) return undefined
+  if (activity.statusId === 'done' || activity.statusId === 'completed') return 'completed'
+  return monthlyStatusOrder.includes(activity.statusId as MonthlyActivityStatus)
+    ? activity.statusId as MonthlyActivityStatus
+    : 'planned'
 }
 
 export function getActivityProgressForMonth(activity: Activity, monthId: string) {
-  return activity.monthlyEntries[monthId] ? getCalculatedActivityProgress(activity) : 0
+  return activityTouchesMonth(activity, monthId) ? getCalculatedActivityProgress(activity) : 0
 }
 
 export function getRoadmapCellLabel(status?: MonthlyActivityStatus) {

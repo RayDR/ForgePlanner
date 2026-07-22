@@ -263,6 +263,14 @@ describe('roadmap monthly model', () => {
   })
   it("defaults to completion mode when weighting is disabled", () => {
     const activity = makeActivity({ progressMode: "completion", statusId: "active", subtasks: [{ id: "one", title: "One", completed: true, weight: 5 }] })
-    expect(getCalculatedActivityProgress(activity)).toBe(0)
+    expect(getCalculatedActivityProgress(activity)).toBe(100)
+  })
+
+  it("updates completion progress from the completed subtask ratio", () => {
+    const activity = makeActivity({ progressMode: "completion", statusId: "active", subtasks: [
+      { id: "one", title: "One", completed: true },
+      { id: "two", title: "Two", completed: false },
+    ] })
+    expect(getCalculatedActivityProgress(activity)).toBe(50)
   })
 })

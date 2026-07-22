@@ -80,8 +80,9 @@ export function getProjectDurationMonths(startDate: string, endDate: string) {
 
 export function activityTouchesMonth(activity: Activity, monthId: string) {
   if (activity.monthlyEntries[monthId]) return true
-  if (!activity.recurrence) return false
-  return monthId >= getMonthId(activity.startDate) && monthId <= getMonthId(activity.recurrence.endDate)
+  const firstMonthId = getMonthId(activity.startDate)
+  const lastMonthId = getMonthId(activity.recurrence?.endDate ?? activity.endDate ?? activity.startDate)
+  return monthId >= firstMonthId && monthId <= lastMonthId
 }
 
 export function activitiesForMonth(activities: Activity[], monthId: string) {

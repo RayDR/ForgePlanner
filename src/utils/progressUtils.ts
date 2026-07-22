@@ -1,18 +1,22 @@
 import { categoryMeta } from '../data/northstarMockData'
 import type { Activity, Project } from '../types/roadmap'
+import { activityTouchesMonth } from './dateUtils'
 import { getActivityGlobalStatus, getCalculatedActivityProgress, getProjectSavingsTotals } from './roadmapModel'
 
 export function getActivityProgress(activity: Activity, monthId?: string) {
-  return monthId && !activity.monthlyEntries[monthId] ? 0 : getCalculatedActivityProgress(activity)
+  return monthId && !activityTouchesMonth(activity, monthId) ? 0 : getCalculatedActivityProgress(activity)
 }
 
 export function getAverageProgress(activities: Activity[], monthId?: string) {
-  if (!activities.length) {
+  const relevantActivities = monthId
+    ? activities.filter((activity) => activityTouchesMonth(activity, monthId))
+    : activities
+  if (!relevantActivities.length) {
     return 0
   }
 
-  const total = activities.reduce((sum, activity) => sum + getActivityProgress(activity, monthId), 0)
-  return Math.round(total / activities.length)
+  const total = relevantActivities.reduce((sum, activity) => sum + getActivityProgress(activity, monthId), 0)
+  return Math.round(total / relevantActivities.length)
 }
 
 export function getMonthlyLoadLabel(count: number) {

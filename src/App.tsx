@@ -19,6 +19,7 @@ import { SharedPlanLinkView } from './views/SharedPlanLinkView'
 import { useSession } from './auth/SessionProvider'
 import { AiProposalView } from './views/AiProposalView'
 import { LandingView, LegalView } from './views/LandingView'
+import { readGuestPlanCandidates } from './persistence/guestPlanMigration'
 
 function DefaultLandingRoute() {
   return <LandingView />
@@ -33,6 +34,7 @@ function PlanRouteBootstrap() {
   const { planId } = useParams()
   const navigate = useNavigate()
   const openPlan = useForgePlannerStore((state) => state.openPlan)
+  const openGuestPlan = useForgePlannerStore((state) => state.openGuestPlan)
   const getPlanById = useForgePlannerStore((state) => state.getPlanById)
   const activePlanId = useForgePlannerStore((state) => state.activePlanId)
   const { session } = useSession()
@@ -43,7 +45,11 @@ function PlanRouteBootstrap() {
       return
     }
 
-    const plan = getPlanById(planId)
+    let plan = getPlanById(planId)
+    if (!plan && session) {
+      plan = readGuestPlanCandidates().find((candidate) => candidate.id === planId)
+      if (plan) openGuestPlan(plan)
+    }
     if (!plan || (!session && plan.remoteId)) {
       navigate('/plans', { replace: true })
       return
@@ -52,7 +58,7 @@ function PlanRouteBootstrap() {
     if (activePlanId !== planId) {
       openPlan(planId)
     }
-  }, [activePlanId, planId, navigate, openPlan, getPlanById, session])
+  }, [activePlanId, planId, navigate, openPlan, openGuestPlan, getPlanById, session])
 
   return <Outlet />
 }

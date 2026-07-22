@@ -16,9 +16,11 @@ import type { Activity, CategoryMeta } from '../types/roadmap'
 import { DEFAULT_PROJECT_STATUSES } from '../utils/roadmapState'
 import { createIdentityScopedStorage } from '../persistence/scopedStorage'
 import { readGuestGeneratedPlans, saveGuestGeneratedPlan } from '../ai/guestGeneratedPlanStorage'
+import { updateGuestPlanCandidate } from '../persistence/guestPlanMigration'
 
 const STORE_VERSION = 2
 const sessionOnlyPlanIds = new Set<string>()
+const mountedGuestPlanIds = new Set<string>()
 
 export interface PlanDraftInput {
   title: string
@@ -36,6 +38,7 @@ export interface PlanDraftInput {
 interface ForgePlannerStore extends ForgePlannerState {
   ensureInitialized: (createDefaults?: boolean) => void
   openPlan: (planId: string) => void
+  openGuestPlan: (plan: ForgePlan) => void
   createPlan: (draft: PlanDraftInput) => string
   addLocalPlan: (plan: ForgePlan) => void
   addSessionPlan: (plan: ForgePlan) => void
@@ -199,6 +202,16 @@ export const useForgePlannerStore = create<ForgePlannerStore>()(
         useRoadmapStore.getState().loadSnapshot(plan.snapshot)
         set({ activePlanId: planId })
       },
+      openGuestPlan: (plan) => {
+        mountedGuestPlanIds.add(plan.id)
+        sessionOnlyPlanIds.add(plan.id)
+        set((state) => ({
+          plans: [plan, ...state.plans.filter((item) => item.id !== plan.id)],
+          activePlanId: plan.id,
+          syncByPlanId: { ...state.syncByPlanId, [plan.id]: { state: 'local' } },
+        }))
+        useRoadmapStore.getState().loadSnapshot(plan.snapshot)
+      },
       createPlan: (draft) => {
         const roadmap = useRoadmapStore.getState()
         const plan = createForgePlanDraft(draft, roadmap.locale, roadmap.theme)
@@ -270,6 +283,8 @@ export const useForgePlannerStore = create<ForgePlannerStore>()(
         }))
 
         const state = get()
+        const updatedPlan = state.plans.find((plan) => plan.id === planId)
+        if (updatedPlan && mountedGuestPlanIds.has(planId)) updateGuestPlanCandidate(updatedPlan)
         if (state.activePlanId === planId) {
           const active = state.plans.find((plan) => plan.id === planId)
           if (active) {
@@ -375,6 +390,8 @@ export const useForgePlannerStore = create<ForgePlannerStore>()(
             updatedAt: new Date().toISOString(),
           })),
         }))
+        const updatedPlan = get().plans.find((plan) => plan.id === planId)
+        if (updatedPlan && mountedGuestPlanIds.has(planId)) updateGuestPlanCandidate(updatedPlan)
       },
       getPlanById: (planId) => get().plans.find((plan) => plan.id === planId),
       linkRemotePlans: (links) => set((state) => ({ plans: state.plans.map((plan) => { const link = links.find((item) => item.importKey === plan.id); return link ? { ...plan, remoteId: link.remoteId, remoteRevision: link.remoteRevision } : plan }), syncByPlanId: { ...state.syncByPlanId, ...Object.fromEntries(links.map((link) => [link.importKey, { state: 'synced' as const }])) } })),
@@ -442,6 +459,8 @@ export const useForgePlannerStore = create<ForgePlannerStore>()(
             updatedAt: new Date().toISOString(),
           })),
         })
+        const updatedPlan = get().plans.find((plan) => plan.id === state.activePlanId)
+        if (updatedPlan && mountedGuestPlanIds.has(updatedPlan.id)) updateGuestPlanCandidate(updatedPlan)
       },
     }),
     {
@@ -468,6 +487,7 @@ export const useForgePlannerStore = create<ForgePlannerStore>()(
 
 export function resetForgePlannerMemory() {
   sessionOnlyPlanIds.clear()
+  mountedGuestPlanIds.clear()
   useForgePlannerStore.setState({
     schemaVersion: STORE_VERSION,
     activePlanId: undefined,

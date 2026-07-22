@@ -10,6 +10,7 @@ import { useNavigate } from 'react-router-dom'
 import { buildVisiblePlanCards, eligibleLocalCards } from './visiblePlanCards'
 import { Modal } from '../ui/Modal'
 import { DownloadIcon, TrashIcon } from '../ui/icons'
+import { synchronizeGuestCommentAuthors } from '../activity/commentAuthor'
 
 function fingerprint(plan: ForgePlan) { return JSON.stringify({ title: plan.title, description: plan.description, startDate: plan.startDate, endDate: plan.endDate, planningMode: plan.planningMode, templateKey: plan.templateKey, categories: plan.categories, monthlyViewPreference: plan.monthlyViewPreference, snapshot: plan.snapshot }) }
 
@@ -33,7 +34,10 @@ export function LocalPlanMigration() {
   const [guestPlans, setGuestPlans] = useState<ForgePlan[]>(readGuestPlanCandidates)
   const loaded = useRef(false); const savedFingerprints = useRef(new Map<string, string>()); const savedRevisions = useRef(new Map<string, number>()); const saving = useRef(new Set<string>())
   const visibleAccountPlans = useMemo(() => plans.filter((plan) => !archivedPlanIds.includes(plan.id)), [archivedPlanIds, plans])
-  const pendingCards = useMemo(() => eligibleLocalCards(buildVisiblePlanCards(visibleAccountPlans, guestPlans, syncByPlanId, !session)), [guestPlans, session, syncByPlanId, visibleAccountPlans])
+  const pendingCards = useMemo(() => {
+    const guestIds = new Set(guestPlans.map((plan) => plan.id))
+    return eligibleLocalCards(buildVisiblePlanCards(visibleAccountPlans.filter((plan) => !guestIds.has(plan.id)), guestPlans, syncByPlanId, !session))
+  }, [guestPlans, session, syncByPlanId, visibleAccountPlans])
   const pending = useMemo(() => pendingCards.map((card) => card.plan), [pendingCards])
 
   useEffect(() => {
@@ -119,7 +123,7 @@ export function LocalPlanMigration() {
     saving.current.add(plan.id)
     setPlanSync(plan.id, { state: 'saving', clientMutationId })
     try {
-      const result = await planApi.create(plan, clientMutationId)
+      const result = await planApi.create(synchronizeGuestCommentAuthors(plan, session), clientMutationId)
       if (!isCurrentScope(scope, generation)) return
       if (guestPlans.some((item) => item.id === plan.id)) {
         removeImportedGuestPlans([plan]); setGuestPlans((items) => items.filter((item) => item.id !== plan.id))

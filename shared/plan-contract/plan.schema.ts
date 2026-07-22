@@ -9,12 +9,14 @@ const visible = (max: number = PLAN_LIMITS.visibleText) => z.string().trim().max
 const nonEmptyVisible = (max: number = PLAN_LIMITS.shortText) => visible(max).min(1)
 const finiteNonNegative = z.number().finite().nonnegative()
 const colorKeySchema = z.enum(['slate', 'blue', 'green', 'amber', 'rose'])
+const colorHexSchema = z.string().regex(/^#[0-9a-fA-F]{6}$/)
 const relationshipModeSchema = z.enum(['independent', 'soft-linked', 'locked-sequence'])
 
 export const categoryDefinitionSchema = z.object({
   key: entityIdSchema,
   label: nonEmptyVisible(),
   tone: colorKeySchema,
+  colorHex: colorHexSchema.optional(),
   isDefault: z.boolean().optional(),
 }).strict()
 
@@ -22,6 +24,7 @@ export const statusDefinitionSchema = z.object({
   id: entityIdSchema,
   label: nonEmptyVisible(),
   colorKey: colorKeySchema,
+  colorHex: colorHexSchema.optional(),
   order: z.number().int().min(0).max(999),
   isSystem: z.boolean().optional(),
   isDefault: z.boolean().optional(),
@@ -99,6 +102,7 @@ export const activitySchema = z.object({
   sequenceGroupId: entityIdSchema.optional(),
   milestone: z.boolean(),
   colorKey: colorKeySchema,
+  colorHex: colorHexSchema.optional(),
   statusId: entityIdSchema,
   progressMode: z.enum(['completion', 'weighted']).optional(),
   budgetImpact: finiteNonNegative.max(1_000_000_000).optional(),
