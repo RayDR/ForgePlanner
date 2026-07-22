@@ -51,7 +51,6 @@ export const planningTurnSchema = z.discriminatedUnion('action', [
 ])
 
 export type PlanningTurn = z.infer<typeof planningTurnSchema>
-const planningTurnEnvelopeSchema = z.object({ turn: planningTurnSchema }).strict()
 
 export const AI_PROPOSAL_MAX_BYTES = 64 * 1024
 
@@ -80,5 +79,26 @@ export function parsePlanningTurn(input: unknown) {
 }
 
 export function planningTurnJsonSchema() {
-  return z.toJSONSchema(planningTurnEnvelopeSchema, { target: 'draft-7' })
+  const proposal = { ...aiProposalJsonSchema() } as Record<string, unknown>
+  delete proposal.$schema
+  return {
+    type: 'object',
+    additionalProperties: false,
+    required: ['turn'],
+    properties: {
+      turn: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['action', 'question', 'suggestedAnswers', 'missingInformation', 'proposal', 'language'],
+        properties: {
+          action: { type: 'string', enum: ['ASK', 'PROPOSE'] },
+          question: { anyOf: [{ type: 'string', minLength: 1, maxLength: 600 }, { type: 'null' }] },
+          suggestedAnswers: { type: 'array', maxItems: 6, items: { type: 'string', minLength: 1, maxLength: 160 } },
+          missingInformation: { type: 'array', maxItems: 8, items: { type: 'string', minLength: 1, maxLength: 120 } },
+          proposal: { anyOf: [proposal, { type: 'null' }] },
+          language: { type: 'string', enum: ['en', 'es'] },
+        },
+      },
+    },
+  }
 }

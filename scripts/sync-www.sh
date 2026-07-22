@@ -6,7 +6,7 @@ PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SOURCE_DIR="${PROJECT_ROOT}/dist/"
 TARGET_DIR="/var/www/planner.domoforge.com/"
 
-echo "Publishing NorthStar Planner..."
+echo "Publishing ForgePlanner..."
 echo "Source: ${SOURCE_DIR}"
 echo "Target: ${TARGET_DIR}"
 

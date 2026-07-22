@@ -58,7 +58,11 @@
 .ai-proposal-sidebar h2 { font-size: 1rem; }
 .ai-operation-row { display: flex; min-width: 0; border-top: 1px solid var(--color-border); }
 .ai-operation-row > button:first-child { flex: 1; min-width: 0; padding: .75rem; background: transparent; border: 0; color: inherit; text-align: left; }
+.ai-operation-delete { align-self: center; display: inline-grid; place-items: center; width: 34px; height: 34px; flex: 0 0 34px; padding: 0; border: 0; border-radius: 9px; color: var(--color-text-muted); background: transparent; }
+.ai-operation-delete:hover, .ai-operation-delete:focus-visible { color: var(--color-danger); background: color-mix(in srgb, var(--color-danger) 10%, transparent); }
 .ai-operation-row strong, .ai-operation-row small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ai-conversion-action { display: flex; justify-content: center; margin-top: .75rem; }
+.ai-conversion-retry { min-height: 42px; }
 .ai-proposal-main { min-width: 0; }
 .ai-goal-form, .ai-proposal-review { padding: clamp(1rem, 3vw, 2rem); }
 .ai-goal-form { display: grid; gap: 1rem; }
@@ -210,6 +214,18 @@
 
 * {
   box-sizing: border-box;
+}
+
+.visually-hidden {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  margin: -1px !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
 }
 
 body {

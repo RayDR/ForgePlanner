@@ -1,8 +1,9 @@
 # AI proposal engine (Stage 6)
 
-Stage 6 stops at `READY_FOR_CONVERSION` and never creates a canonical `Plan` or
-`PlanVersion`. The deterministic mock remains the default. An OpenAI provider
-can be enabled explicitly on the backend with `AI_PROVIDER=openai`.
+The proposal engine continues from discovery through canonical preview and
+explicit plan creation. The deterministic mock remains available for local
+testing. The OpenAI provider is enabled explicitly on the backend with
+`AI_PROVIDER=openai`; it never silently falls back to mock.
 
 ## Conversational planning turns
 
@@ -84,9 +85,9 @@ prompts and responses are never logged. Configure:
 ```dotenv
 AI_PROVIDER=openai
 OPENAI_API_KEY=REPLACE_WITH_A_BACKEND_SECRET
-OPENAI_PROPOSAL_MODEL=gpt-5.6-sol
-OPENAI_CONVERSION_MODEL=gpt-5.6-sol
-OPENAI_TIMEOUT_MS=20000
+OPENAI_PROPOSAL_MODEL=replace-with-an-available-gpt-5.6-model
+OPENAI_CONVERSION_MODEL=replace-with-an-available-gpt-5.6-model
+OPENAI_TIMEOUT_MS=60000
 ```
 
 If `AI_PROVIDER` is absent it defaults to `mock`. If it is explicitly set to

@@ -20,12 +20,12 @@ COOKIE_SECURE=true
 TRUST_PROXY=true
 # Generate once per environment with: openssl rand -hex 32
 AI_GUEST_SESSION_SIGNING_KEY=REPLACE_WITH_A_64_CHARACTER_RANDOM_HEX_VALUE
-AI_PROVIDER=mock
+AI_PROVIDER=openai
 # Only required when AI_PROVIDER=openai; never expose it through VITE_*.
 OPENAI_API_KEY=
-OPENAI_PROPOSAL_MODEL=gpt-5.6-sol
-OPENAI_CONVERSION_MODEL=gpt-5.6-sol
-OPENAI_TIMEOUT_MS=20000
+OPENAI_PROPOSAL_MODEL=replace-with-an-available-gpt-5.6-model
+OPENAI_CONVERSION_MODEL=replace-with-an-available-gpt-5.6-model
+OPENAI_TIMEOUT_MS=60000
 ```
 
 `AI_GUEST_SESSION_SIGNING_KEY` signs the short-lived guest AI session and

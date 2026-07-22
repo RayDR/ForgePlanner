@@ -27,7 +27,7 @@ export class EmailVerificationService {
     const es = user.profile?.locale !== 'en'
     const url = `${publicSettings.frontendUrl}/verify-email?token=${encodeURIComponent(token)}`
     const name = escapeHtml(user.profile?.displayName ?? 'NorthStar user')
-    const subject = es ? 'Verifica tu correo de NorthStar Planner' : 'Verify your NorthStar Planner email'
+    const subject = es ? 'Verifica tu correo de ForgePlanner' : 'Verify your ForgePlanner email'
     const text = es ? `Hola ${user.profile?.displayName ?? ''}, verifica tu correo: ${url}\nEste enlace vence en ${this.env.EMAIL_VERIFICATION_TTL_HOURS} horas.` : `Hello ${user.profile?.displayName ?? ''}, verify your email: ${url}\nThis link expires in ${this.env.EMAIL_VERIFICATION_TTL_HOURS} hours.`
     const html = `<main><h1>${es ? 'Verifica tu correo' : 'Verify your email'}</h1><p>${es ? `Hola ${name}. Confirma que esta dirección te pertenece.` : `Hello ${name}. Confirm that this address belongs to you.`}</p><p><a href="${escapeHtml(url)}">${es ? 'Verificar correo' : 'Verify email'}</a></p><p>${es ? `El enlace vence en ${this.env.EMAIL_VERIFICATION_TTL_HOURS} horas.` : `The link expires in ${this.env.EMAIL_VERIFICATION_TTL_HOURS} hours.`}</p></main>`
     try {

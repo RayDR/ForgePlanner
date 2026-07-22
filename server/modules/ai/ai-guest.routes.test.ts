@@ -5,13 +5,13 @@ import request from 'supertest'
 import { describe, expect, it } from 'vitest'
 import type { AppEnv } from '../../config/env.js'
 import { errorHandler } from '../../http/errors.js'
-import { aiProposalRoutes } from './ai.routes.js'
+import { aiProposalRoutes, GUEST_CONVERSATION_REQUEST_LIMIT } from './ai.routes.js'
 
 const env = {
   NODE_ENV: 'test', PORT: 4100, DATABASE_URL: 'postgresql://unused', APP_ORIGIN: 'http://localhost:5173', SESSION_TTL_HOURS: 24,
   COOKIE_SECURE: false, TRUST_PROXY: false, REGISTRATION_ENABLED: true, EMAIL_VERIFICATION_REQUIRED: false, RECAPTCHA_MIN_SCORE: 0.5,
   PASSWORD_RESET_TTL_MINUTES: 30, EMAIL_VERIFICATION_TTL_HOURS: 24, SMTP_PORT: 587, SMTP_SECURE: false,
-  SMTP_FROM_NAME: 'NorthStar Planner', AI_GUEST_SESSION_SIGNING_KEY: 'guest-test-key-that-is-at-least-32-characters',
+  SMTP_FROM_NAME: 'ForgePlanner', AI_GUEST_SESSION_SIGNING_KEY: 'guest-test-key-that-is-at-least-32-characters',
   AI_PROVIDER: 'mock', OPENAI_PROPOSAL_MODEL: 'gpt-5.6-sol', OPENAI_CONVERSION_MODEL: 'gpt-5.6-sol', OPENAI_TIMEOUT_MS: 20_000,
 } satisfies AppEnv
 
@@ -25,6 +25,13 @@ function guestApp() {
 }
 
 describe('guest AI proposal HTTP lifecycle', () => {
+  it('allows a complete clarification conversation before returning a structured rate-limit error', async () => {
+    const agent = request.agent(guestApp()); const initialized = await agent.post('/api/ai/guest/session').expect(200); const csrf = initialized.body.csrfToken as string
+    const payload = { goal: 'I want to open a business', conversation: [], clarificationCount: 0, preferredLanguage: 'en', locale: 'en', constraints: [], nonNegotiables: [], planIntensity: 'balanced' }
+    for (let attempt = 0; attempt < GUEST_CONVERSATION_REQUEST_LIMIT; attempt += 1) await agent.post('/api/ai/guest/plan-proposals').set('x-ai-guest-csrf', csrf).send({ ...payload, clientRequestId: crypto.randomUUID() }).expect(201)
+    await agent.post('/api/ai/guest/plan-proposals').set('x-ai-guest-csrf', csrf).send({ ...payload, clientRequestId: crypto.randomUUID() }).expect(429).expect(({ body }) => expect(body.error.code).toBe('AI_RATE_LIMITED'))
+  })
+
   it('runs the complete business clarification flow inline before proposing', async () => {
     const agent = request.agent(guestApp())
     const initialized = await agent.post('/api/ai/guest/session').expect(200)

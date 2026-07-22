@@ -1,5 +1,5 @@
 [Unit]
-Description=NorthStar Planner API
+Description=ForgePlanner API
 After=network.target postgresql.service
 
 [Service]

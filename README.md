@@ -1,97 +1,82 @@
-# NorthStar Planner
+# ForgePlanner
 
-NorthStar Planner is a React/Vite planner backed by a modular Node/Express API. PostgreSQL stores users, sessions, authorization, ownership and audit records; each plan remains a portable JSON snapshot stored as JSONB. Existing Zustand/localStorage plans are preserved until the user explicitly downloads a backup and imports them.
+ForgePlanner turns a goal into a clear, editable roadmap. A user can plan manually or have **NorthStar AI** ask focused questions, produce a human-readable proposal, refine an immutable proposal revision, and convert the exact accepted revision into a validated canonical plan.
 
-## Stack and structure
+- Demo: [planner.domoforge.com](https://planner.domoforge.com/)
+- Source: [github.com/RayDR/ForgePlanner](https://github.com/RayDR/ForgePlanner) (public)
+- Languages: English and Spanish
+- Guest evaluation: no account or rebuild required
+- OpenAI Build Week 2026 project
 
-- React 19, TypeScript, Vite and React Router
-- Zustand for planner state and the existing local persistence contract
-- Express, Zod and structured Pino logging
-- PostgreSQL with Prisma and versioned migrations
-- `src/`: planner, authentication and administration UI
-- `server/`: API modules, authorization, email and security services
-- `prisma/`: schema, migrations and idempotent RBAC/admin seed
-- `config/`: safe configuration examples; completed secret files must not be committed
-- `deploy/`: Nginx and service deployment configuration
-- `docs/`: architecture and production activation details
+## Problem and solution
 
-## Implemented multiuser features
+Long-term goals often begin as an unstructured idea. Generic generated checklists are difficult to trust, adapt, or track. ForgePlanner separates discovery, review, conversion, and execution:
 
-### Authentication and profile
+1. Describe a goal in natural language.
+2. NorthStar AI asks one useful clarification at a time.
+3. Review and refine a readable proposal.
+4. Accept one exact immutable revision.
+5. Convert it into canonical plan JSON v8 and validate it server-side.
+6. Open the annual roadmap or monthly planner and keep editing.
 
-- registration, login, current session, logout and logout-all
-- Argon2id password hashes and opaque server-side sessions
-- Google OAuth and score-based reCAPTCHA integration points
-- public profile code in `handle#1234` format
-- editable public profile with display name, handle, biography, avatar URL, timezone and search visibility
-- language and theme preferences persisted in the authenticated profile
-- persisted language and theme preferences
-- protected public/authenticated/administrative routes
-- password recovery with hashed, expiring, single-use tokens
-- previous sessions are revoked after a successful password reset
-- hashed, expiring and single-use email verification links with generic resend responses
-- optional registration enforcement through `EMAIL_VERIFICATION_REQUIRED`; Google identities are verified automatically
-- account session/device listing, current-session identification and individual revocation
-- masked IP display and throttled last-activity updates
+The assistant states assumptions and warnings and does not promise outcomes. Manual creation remains fully available.
 
-### Plans and migration
+## Screenshots
 
-- PostgreSQL ownership with complete JSONB snapshots
-- CRUD policies based on the authenticated session, never a client-provided owner ID
-- server-first authenticated creation using an owner-scoped `clientMutationId`
-- first-successful-request-wins create retries: the same owner and mutation ID return the original plan with `created: false`, without changing its payload, revision or audit history
-- explicit, idempotent local plan import using `importKey`
-- downloadable JSON backup before migration
-- local data is not automatically deleted after importing
-- owner, editor and viewer access levels
-- exact public-code search without exposing email addresses
-- invitation acceptance, rejection, permission changes and revocation
-- archived-plan privacy that suspends collaborator access without deleting the access list
-- explicit, confirmed permanent deletion with an immutable audit event
-- backend-enforced viewer read-only access
-- per-plan revisions with atomic optimistic-concurrency checks
-- immutable, linear plan-version history with restore-as-new-revision ([operations and invariants](docs/plan-version-history.md))
-- bilingual conflict resolution that can load the remote version or intentionally keep local changes
+Production screenshots are stored in [`docs/screenshots`](docs/screenshots):
 
-### Administration and audit
+- [ForgePlanner landing page](docs/screenshots/forgeplanner-home.png)
+- [NorthStar AI planning workspace](docs/screenshots/northstar-ai-workspace.png)
 
-- protected `/admin` user and audit interface
-- user search, status changes and role management
-- protection against self-demotion and disabling the last active administrator
-- active sessions revoked when an account is suspended or disabled
-- one-hour, non-chainable impersonation with a required reason
-- persistent impersonation banner and explicit termination control
-- separate `actorUserId` and `effectiveUserId` audit identities
-- target-user permissions are applied during impersonation
-- sensitive administrative operations are blocked while impersonating
+## Architecture
 
-### Notifications
+- React 19, TypeScript, Vite, React Router and Zustand
+- Node.js/Express API with Zod validation and structured Pino logging
+- PostgreSQL and Prisma for users, sessions, ownership, AI operations, plans, and immutable versions
+- Portable canonical plan schema v8 stored as JSONB
+- OpenAI Responses API with strict Structured Outputs behind a provider abstraction
+- Identity-scoped browser persistence for guest and authenticated state
+- Session-only guest AI proposals and generated plans
 
-- in-app notification inbox and unread counter in the shared header
-- translated plan invitation, acceptance and rejection notifications
-- individual and bulk read state
-- per-user preferences for invitations, responses and future email delivery
+The browser never decides server authorization. Authenticated mutations use the immutable user UUID from the session. `PlanRevisionService` atomically writes `Plan` and `PlanVersion`; server-backed plans remain authoritative.
 
-### Collaboration
+More detail:
 
-- organizations with owner, administrator and member roles
-- organization membership through exact public profile codes
-- private direct conversations between authenticated users
-- persisted message history with participant-level authorization
+- [Canonical plan contract](docs/plan-contract.md)
+- [AI proposal and conversion lifecycle](docs/ai-proposal-stage6.md)
+- [Immutable version history](docs/plan-version-history.md)
+- [Multiuser architecture](docs/multiuser-architecture.md)
 
-### SMTP and email security
+## How GPT-5.6 is used
 
-- provider abstraction with SMTP implementation
-- database configuration with environment fallback
-- SMTP password encrypted using AES-256-GCM
-- the master key exists only in the local ignored environment file
-- the API returns `passwordConfigured`, never plaintext or ciphertext
-- administrative SMTP editor and test-delivery action
-- delivery logs contain only a recipient hash
-- password reset HTML and plain-text defaults stored outside application code
-- editable, versioned database overrides with safe-tag validation, preview and default restoration
+NorthStar AI uses GPT-5.6 through the backend only:
 
-SMTP is intentionally disabled when credentials fail verification. A stale or rejected password is removed rather than retained. Replace it through `Administration → Email`, test delivery, and only then enable it.
+- conversational discovery returns one structured `ASK` or `PROPOSE` decision;
+- proposal refinement creates a new immutable proposal revision;
+- conversion receives the exact `readyProposalRevisionId` content and returns canonical plan JSON v8;
+- the server validates structure, semantics, protected metadata, size, deterministic serialization, and checksum before showing a preview;
+- authenticated confirmation creates exactly one revision-1 `Plan` and one revision-1 `PlanVersion` with source `AI_GENERATION`;
+- guest conversion never writes an AI operation, plan, or version to PostgreSQL.
+
+Mock mode implements the same application boundary for deterministic local tests. Production never silently falls back from OpenAI to mock.
+
+## How Codex was used
+
+Codex was the primary engineering collaborator for repository discovery, staged architecture design, TypeScript/React/API implementation, schema and migration work, test generation, production diagnostics, security review, responsive UI fixes, deployment verification, and documentation. The work was kept auditable through focused diffs, automated checks, isolated PostgreSQL integration tests, and real-provider smoke tests.
+
+Build Week evaluators still require the project owner to run `/feedback` from an official Codex interface and paste the returned Session ID into Devpost. This repository does not invent or store that ID.
+
+## Test the public demo without rebuilding
+
+1. Open [ForgePlanner](https://planner.domoforge.com/) in a private browser window.
+2. Choose **Plan with AI** / **Planear con IA**.
+3. Dismiss the sensitive-data warning and enter a short goal.
+4. Answer the assistant's clarification, refine the proposal if desired, and accept it.
+5. Review the generated preview and create the plan.
+6. The guest plan opens as **LOCAL ONLY / SOLO LOCAL** and remains in the current browser session.
+7. Registration is optional. Signing in never transfers a guest plan automatically; **Save to my account** synchronizes only the chosen plan.
+
+The same demo supports manual plan creation, annual roadmaps, monthly planning, savings tracking, English/Spanish, and light/dark themes.
 
 ## Local development
 
@@ -99,7 +84,7 @@ Requirements: Node.js 22+ and PostgreSQL 15+.
 
 ```bash
 cp .env.example .env
-npm install
+npm ci
 npm run prisma:generate
 npm run prisma:migrate
 npm run db:seed
@@ -108,112 +93,94 @@ npm run dev:all
 
 The client runs at `http://localhost:5173`; Vite proxies `/api` to `http://127.0.0.1:4100`.
 
-The PostgreSQL plan integration suite must use a dedicated test database whose
-name or schema contains `test`. It refuses to reuse `DATABASE_URL`:
+### Mock-mode evaluation
 
-```bash
-TEST_DATABASE_URL="postgresql://user:password@127.0.0.1:5432/northstar_planner_test?schema=public" npm run test:integration
+Use safe values in `.env` and keep the provider deterministic:
+
+```dotenv
+NODE_ENV=development
+AI_PROVIDER=mock
+AI_GUEST_SESSION_SIGNING_KEY=replace-with-at-least-32-random-characters
+DATABASE_URL=postgresql://user:password@127.0.0.1:5432/forgeplanner_dev?schema=public
 ```
 
-## Initial administrator
+No OpenAI key is required in mock mode. Run `npm run dev:all`, open `/plans`, and select the single creation card to exercise manual or AI creation.
 
-There is no default password. Set `ADMIN_EMAIL`, `ADMIN_PASSWORD` (12+ characters) and optionally `ADMIN_DISPLAY_NAME`, then run:
+### Real OpenAI activation
 
-```bash
-npm run db:seed
+Put secrets only in an ignored backend runtime file such as `api.env.local`, set its mode to `0600`, and never use a `VITE_` prefix:
+
+```dotenv
+AI_PROVIDER=openai
+OPENAI_API_KEY=replace-with-a-server-only-secret
+OPENAI_PROPOSAL_MODEL=replace-with-an-available-gpt-5.6-model
+OPENAI_CONVERSION_MODEL=replace-with-an-available-gpt-5.6-model
+OPENAI_TIMEOUT_MS=60000
+AI_GUEST_SESSION_SIGNING_KEY=replace-with-at-least-32-random-characters
+DATABASE_URL=postgresql://user:password@127.0.0.1:5432/forgeplanner?schema=public
 ```
 
-The seed is idempotent. It creates a missing administrator or grants the `admin` and `user` roles to an existing account without changing its password.
+The production process must load this file only in the backend. Restart only the API, check `/api/health`, and confirm the safe startup fields without logging any secret. See [production activation](docs/production-activation.md).
 
-To promote an existing production account using the local runtime environment:
+## Environment variables
 
-```bash
-set -a
-source api.env.local
-set +a
-ADMIN_EMAIL="admin@example.com" npm run db:seed
-```
+`.env.example` documents authentication, PostgreSQL, SMTP, Google OAuth, reCAPTCHA, OpenAI, rate-limit, and session settings without real values. Important AI variables are:
 
-## SMTP configuration
+| Variable | Purpose |
+| --- | --- |
+| `AI_PROVIDER` | Explicit `mock` or `openai` provider selection |
+| `OPENAI_API_KEY` | Backend-only provider credential |
+| `OPENAI_PROPOSAL_MODEL` | Conversational discovery/refinement model |
+| `OPENAI_CONVERSION_MODEL` | Canonical v8 conversion model |
+| `OPENAI_TIMEOUT_MS` | Bounded provider request timeout |
+| `AI_GUEST_SESSION_SIGNING_KEY` | Signs guest proposal and conversion state |
 
-Generate the encryption key once and keep it outside Git:
-
-```bash
-openssl rand -base64 32
-```
-
-Store it as `EMAIL_ENCRYPTION_KEY` in the protected runtime environment. `api.env.local` is ignored by Git and must use mode `0600`.
-
-A safe template is available at [`config/email-settings.example.json`](config/email-settings.example.json). An existing environment configuration can be imported without printing its values:
-
-```bash
-npm run smtp:import -- /secure/path/source.env api.env.local
-```
-
-The importer creates the master key when absent, encrypts the SMTP password before PostgreSQL persistence and never copies plaintext into tracked files.
-
-## API overview
-
-- `/api/auth/*`: registration, sessions, OAuth and password recovery
-- `/api/auth/email-verification/*`: verification-link request and confirmation
-- `/api/profile`, `/api/profiles/search`: profile preferences and public lookup
-- `/api/plans/*`: ownership, JSONB persistence, import and sharing
-- `/api/admin/users/*`: protected user administration
-- `/api/admin/impersonation`: start/end impersonation
-- `/api/admin/audit-logs`: protected audit query
-- `/api/admin/settings/email`: SMTP configuration and delivery test
-
-See [`docs/multiuser-architecture.md`](docs/multiuser-architecture.md) for the endpoint list and authorization model.
-
-Plan sharing supports a master access lock that preserves the collaborator list and general link. Owners can grant view or edit access per person, create an authenticated general link with view or edit permission, disable that link without deleting it, or remove it permanently. These permissions are enforced by the API, not only by the interface.
-
-## Security properties
-
-- `HttpOnly`, `SameSite=Strict` and production `Secure` session cookies
-- only SHA-256 session and password-reset token hashes are stored
-- separate CSRF double-submit token verified against its database hash
-- restricted CORS, Helmet, payload limits and rate limiting
-- generic authentication/recovery responses
-- centralized RBAC and resource ownership checks
-- no passwords, cookies, OAuth secrets or SMTP plaintext in localStorage
-- sensitive log fields are redacted
-- audit records are immutable through the public API
+Do not commit completed `.env`, `*.local`, OAuth/SMTP secrets, database credentials, or generated key material.
 
 ## Validation
 
 ```bash
 npm run lint
 npx tsc -b --pretty false
+npm test -- --run
+npm run test:integration
 npm run build:api
-npm test
 npm run build
-npm audit
+git diff --check
 ```
 
-## Production
+`test:integration` refuses to run unless `TEST_DATABASE_URL` points to a database or schema whose name contains `test`; it never reuses production `DATABASE_URL`.
 
-Production activation and database/API order are documented in [`docs/production-activation.md`](docs/production-activation.md). The Nginx API proxy example is in [`docs/nginx-api.conf.example`](docs/nginx-api.conf.example).
+## Privacy and security
 
-The production health check must return JSON, not the SPA:
+- API keys and provider requests remain server-side and raw prompts/responses are not logged.
+- Sensitive-input checks reject obvious credentials before provider invocation.
+- Guest AI state uses tab-scoped `sessionStorage`, not ordinary `localStorage`.
+- Guest data is never silently assigned to an authenticated account.
+- Session cookies are `HttpOnly`, `Secure` in production, and `SameSite=Strict`.
+- PostgreSQL ownership and collaborator permissions are enforced atomically by the API.
+- OpenAI output is untrusted until strict v8 structure and semantic checks pass.
 
-```bash
-curl https://planner.domoforge.com/api/health
-```
+Public pages: [Privacy Policy](https://planner.domoforge.com/privacy), [Terms of Service](https://planner.domoforge.com/terms), and contact at [hello@domoforge.com](mailto:hello@domoforge.com).
 
-Expected response:
+## Known limitations
 
-```json
-{"status":"ok"}
-```
+- Guest AI plans are intentionally session-only and disappear when that browser session ends unless explicitly saved to an account.
+- Exact provider cost is not calculated when current pricing is not returned by the provider.
+- AI suggestions require human review and are not professional legal, medical, immigration, or financial advice.
+- Organization channels, message editing/deletion, and delivery/read receipts remain future work.
 
-## Operational documentation
+## Build Week submission checklist
 
-- [Canonical plan contract](docs/plan-contract.md)
-- [Server-backed plan trash and purge](docs/plan-trash.md)
-- [AI proposal engine, Stage 6](docs/ai-proposal-stage6.md)
+- Public demo works without rebuilding and supports guest testing.
+- Repository includes setup, mock mode, real-provider activation, tests, architecture, privacy, and security documentation.
+- Landing, sign-in, registration, continue-as-guest planning, Privacy, Terms, and contact information are public.
+- This project was built during OpenAI Build Week 2026 using Codex and GPT-5.6.
 
-## Remaining roadmap
+Manual Devpost steps remain the project owner's responsibility:
 
-- organization channels, message editing/deletion and delivery/read receipts
-
-Do not commit completed `.env`, `*.local`, SMTP passwords, OAuth credentials or encryption keys.
+- run `/feedback` in an official Codex interface and record the Session ID;
+- upload a public or unlisted video of about three minutes with voiceover;
+- explain Codex and GPT-5.6 and show questions, refinement, conversion, and the opened planner;
+- verify the video reveals no secrets or private data;
+- verify the project appears under **My Projects** with green **Submitted** status, team invitations are accepted, and the repository/video links work.

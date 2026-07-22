@@ -28,7 +28,7 @@ Activity `dependencyIds` and `linkedActivityIds` are execution-level references.
 
 The application keeps `Record<YYYY-MM, MonthlyActivityEntry>` because it is the editor's established domain representation. Keys and values are bounded and strictly validated. Cross-reference existence, uniqueness, cycles and key/value month consistency are semantic guarantees that JSON Schema alone cannot express.
 
-The canonical JSON Schema is exported as `canonicalPlanJsonSchema`. It is intended for documentation and deterministic validation, not direct model generation. Future AI work should use an AI-safe intermediate representation followed by a deterministic mapper and canonical validation. No model/provider metadata belongs in the mapped plan.
+The canonical JSON Schema is exported as `canonicalPlanJsonSchema`. The OpenAI conversion boundary derives a provider-compatible strict Structured Outputs schema from it without changing the persisted contract; unsupported provider-only constraints remain authoritative in the canonical Zod and semantic validators. No model/provider metadata belongs in the mapped plan.
 
 ## Migration policy
 

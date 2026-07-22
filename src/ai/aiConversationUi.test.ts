@@ -32,4 +32,15 @@ describe('inline conversational proposal UI', () => {
     expect(view).toContain('addSessionPlan(plan)')
     expect(view).toContain('navigate(`/plans/${plan.id}/roadmap`)')
   })
+
+  it('offers confirmed deletion and retry without losing the accepted proposal', () => {
+    expect(view).toContain('t.deleteConversation')
+    expect(view).toContain('confirmDeleteConversation')
+    expect(view).toContain('deleteGuestConversation(operationId)')
+    expect(view).toContain('aiApi.remove(operationId)')
+    expect(view).toContain('t.retryConversion')
+    expect(view).toContain('void convert()')
+    expect(view).toContain("['READY_FOR_CONVERSION', 'CONVERSION_FAILED'].includes(current.operation.status)")
+    expect(view).toContain('canRetryConversion')
+  })
 })

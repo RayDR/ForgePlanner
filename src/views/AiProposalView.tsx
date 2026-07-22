@@ -4,7 +4,9 @@ import { AiContextControls } from '../ai/AiContextControls'
 import { AiRequestError, aiApi } from '../ai/aiApi'
 import { aiProposalCopy } from '../ai/aiProposalCopy'
 import { AssistantTypingMessage } from '../ai/AssistantTypingMessage'
+import { textConversation } from '../ai/aiConversationBoundary'
 import { clearAiConversation, emptyAiConversationState, readAiConversation, saveAiConversation } from '../ai/aiConversationStorage'
+import { deleteGuestConversation } from '../ai/deleteGuestConversation'
 import { readGuestProposals, saveGuestProposal } from '../ai/guestProposalStorage'
 import type { AiConversationMessage, AiConversionResult, AiOperationDto, AiProposalResult, GuestProposalRecord } from '../ai/aiTypes'
 import { dismissSensitiveWarning, isSensitiveWarningDismissed } from '../ai/aiWorkspaceSession'
@@ -16,16 +18,13 @@ import { Modal } from '../ui/Modal'
 import { forgePlanFromAiSnapshot } from '../ai/guestGeneratedPlanStorage'
 import { useForgePlannerStore } from '../hooks/useForgePlannerStore'
 import { fromRemote } from '../plans/planApi'
+import { TrashIcon } from '../ui/icons'
 
 type GuestSessionState = 'idle' | 'loading' | 'ready' | 'error'
 type ConversationMode = 'refine' | 'continue' | null
 
 function hasGuestCsrfCookie() {
   return typeof document !== 'undefined' && document.cookie.split('; ').some((item) => item.startsWith('northstar_ai_csrf='))
-}
-
-function textConversation(messages: AiConversationMessage[]) {
-  return messages.flatMap((message) => message.kind === 'text' ? [{ role: message.role, content: message.content }] : [])
 }
 
 function proposalMessage(result: AiProposalResult): AiConversationMessage | null {
@@ -57,6 +56,9 @@ export function AiProposalView({ embedded = false, onBack }: { embedded?: boolea
   const [guestSessionState, setGuestSessionState] = useState<GuestSessionState>('idle')
   const [confirmStartOver, setConfirmStartOver] = useState(false)
   const [showSensitiveWarning, setShowSensitiveWarning] = useState(() => !isSensitiveWarningDismissed())
+  const [deleteTarget, setDeleteTarget] = useState<AiOperationDto | null>(null)
+  const [deletingId, setDeletingId] = useState<string | null>(null)
+  const [conversionFailed, setConversionFailed] = useState(false)
   const requestRef = useRef<AbortController | null>(null)
   const composerRef = useRef<HTMLTextAreaElement>(null)
   const hydratedRef = useRef(false)
@@ -80,7 +82,7 @@ export function AiProposalView({ embedded = false, onBack }: { embedded?: boolea
     queueMicrotask(() => {
       if (!isCurrentScope(scope, generation)) return
       setGoal(saved.goal); setComposerContext(saved.context); setMessages(saved.messages); setClarificationCount(saved.clarificationCount); setConversationLanguage(saved.conversationLanguage); setActiveOperationId(saved.activeOperationId)
-      setCurrent(null); setConversion(null); setOperations([]); setInstruction(''); setMode(null); setError(''); setBusy(false); hydratedRef.current = true
+      setCurrent(null); setConversion(null); setConversionFailed(false); setOperations([]); setInstruction(''); setMode(null); setError(''); setBusy(false); hydratedRef.current = true
     })
     if (guest) {
       const records = readGuestProposals()
@@ -95,7 +97,7 @@ export function AiProposalView({ embedded = false, onBack }: { embedded?: boolea
       const resume = result.operations.find((operation) => operation.id === saved.activeOperationId)
       if (resume) {
         const resumed = await aiApi.get(resume.id, controller.signal)
-        if (isCurrentScope(scope, generation)) { setCurrent(resumed); if (['PLAN_PREVIEW_READY','COMPLETED'].includes(resumed.operation.status)) void aiApi.conversion(resume.id, controller.signal).then((value) => { if (isCurrentScope(scope, generation)) setConversion(value) }) }
+        if (isCurrentScope(scope, generation)) { setCurrent(resumed); setConversionFailed(resumed.operation.status === 'CONVERSION_FAILED'); if (['PLAN_PREVIEW_READY','COMPLETED'].includes(resumed.operation.status)) void aiApi.conversion(resume.id, controller.signal).then((value) => { if (isCurrentScope(scope, generation)) setConversion(value) }) }
       }
     }).catch(() => { if (!controller.signal.aborted && isCurrentScope(scope, generation)) setError(t.requestError) })
     return () => controller.abort()
@@ -126,6 +128,10 @@ export function AiProposalView({ embedded = false, onBack }: { embedded?: boolea
 
   function handleRequestError(reason: unknown) {
     if (guest && reason instanceof AiRequestError && ['AI_GUEST_NOT_CONFIGURED', 'AI_GUEST_SESSION_INVALID', 'AI_GUEST_SESSION_EXPIRED', 'INVALID_CSRF_TOKEN'].includes(reason.code)) { setGuestSessionState('error'); setError(t.sessionStartError); return }
+    if (reason instanceof AiRequestError && ['AI_RATE_LIMITED', 'AI_PROVIDER_RATE_LIMITED', 'AI_PROPOSAL_LIMIT_REACHED', 'AI_PROPOSAL_REFINEMENT_LIMIT'].includes(reason.code)) { setError(t.rateLimitError); return }
+    if (reason instanceof AiRequestError && ['AI_PROVIDER_TIMEOUT', 'AI_CONVERSION_TIMEOUT'].includes(reason.code)) { setError(t.conversionTimeoutError); return }
+    if (reason instanceof AiRequestError && ['AI_PROVIDER_UNAVAILABLE', 'AI_CONVERSION_UNAVAILABLE'].includes(reason.code)) { setError(t.providerUnavailableError); return }
+    if (reason instanceof AiRequestError && reason.code === 'AI_CONVERSION_INVALID_OUTPUT') { setError(t.conversionStructureError); return }
     if (reason instanceof AiRequestError && reason.code === 'AI_PROPOSAL_SENSITIVE_INPUT') { setError(t.sensitiveInputError); return }
     setError(t.requestError)
   }
@@ -156,17 +162,26 @@ export function AiProposalView({ embedded = false, onBack }: { embedded?: boolea
         retain(persisted)
         setMessages((items) => [...items, proposalMessage(persisted)!])
       }
-    } catch (reason) { if (!controller.signal.aborted && isCurrentScope(scope, generation)) handleRequestError(reason) }
+    } catch (reason) {
+      if (!controller.signal.aborted && isCurrentScope(scope, generation)) {
+        // Keep the attempted answer in the composer, but do not persist it in
+        // the transcript until the server accepts the turn. Otherwise each
+        // retry duplicates the answer and eventually exceeds the eight-message
+        // API boundary, masking the original provider failure with HTTP 400.
+        setMessages(messages)
+        handleRequestError(reason)
+      }
+    }
     finally { if (isCurrentScope(scope, generation)) setBusy(false) }
   }
 
   async function submitConversation(event: React.FormEvent) { event.preventDefault(); const value = messages.length ? instruction : goal; if (value.trim()) await requestTurn(value) }
 
   async function open(operation: AiOperationDto) {
-    if (guest) { setCurrent(readGuestProposals().find((item) => item.operation.id === operation.id) ?? null); setConversion(null); setActiveOperationId(operation.id); return }
+    if (guest) { setCurrent(readGuestProposals().find((item) => item.operation.id === operation.id) ?? null); setConversion(null); setConversionFailed(false); setActiveOperationId(operation.id); return }
     const scope = getIdentityScope(); const generation = getScopeGeneration(); if (!scope) return
     setBusy(true)
-    try { const result = await aiApi.get(operation.id); if (isCurrentScope(scope, generation)) { setCurrent(result); setConversion(['PLAN_PREVIEW_READY','COMPLETED'].includes(result.operation.status) ? await aiApi.conversion(operation.id) : null); setActiveOperationId(operation.id) } }
+    try { const result = await aiApi.get(operation.id); if (isCurrentScope(scope, generation)) { setCurrent(result); setConversionFailed(result.operation.status === 'CONVERSION_FAILED'); setConversion(['PLAN_PREVIEW_READY','COMPLETED'].includes(result.operation.status) ? await aiApi.conversion(operation.id) : null); setActiveOperationId(operation.id) } }
     catch (reason) { if (isCurrentScope(scope, generation)) handleRequestError(reason) }
     finally { if (isCurrentScope(scope, generation)) setBusy(false) }
   }
@@ -206,8 +221,9 @@ export function AiProposalView({ embedded = false, onBack }: { embedded?: boolea
       const result = await aiApi.convert(source.operation.id, { clientRequestId: crypto.randomUUID(), ...(guest ? { currentProposal: source.proposal, signedProposalToken: source.signedProposalToken } : {}) }, guest, controller.signal)
       if (!isCurrentScope(scope, generation)) return
       setConversion(result)
+      setConversionFailed(false)
       setCurrent((value) => value ? { ...value, operation: { ...value.operation, status: result.status } } : value)
-    } catch (reason) { if (!controller.signal.aborted && isCurrentScope(scope, generation)) { handleRequestError(reason); setError(t.conversionError) } }
+    } catch (reason) { if (!controller.signal.aborted && isCurrentScope(scope, generation)) { setConversionFailed(true); handleRequestError(reason) } }
     finally { if (isCurrentScope(scope, generation)) setBusy(false) }
   }
 
@@ -232,7 +248,7 @@ export function AiProposalView({ embedded = false, onBack }: { embedded?: boolea
 
   async function resetWorkspace() {
     try {
-      const empty = emptyAiConversationState(); clearAiConversation(); setCurrent(null); setConversion(null); setActiveOperationId(null); setGoal(empty.goal); setInstruction(''); setComposerContext(empty.context); setMessages(empty.messages); setClarificationCount(0); setConversationLanguage(null); setMode(null); setContextControlsKey((key) => key + 1); setError(''); setConfirmStartOver(false)
+      const empty = emptyAiConversationState(); clearAiConversation(); setCurrent(null); setConversion(null); setConversionFailed(false); setActiveOperationId(null); setGoal(empty.goal); setInstruction(''); setComposerContext(empty.context); setMessages(empty.messages); setClarificationCount(0); setConversationLanguage(null); setMode(null); setContextControlsKey((key) => key + 1); setError(''); setConfirmStartOver(false)
     } catch (reason) { handleRequestError(reason); setConfirmStartOver(false) }
   }
 
@@ -241,15 +257,38 @@ export function AiProposalView({ embedded = false, onBack }: { embedded?: boolea
     else void resetWorkspace()
   }
 
+  async function confirmDeleteConversation() {
+    if (!deleteTarget) return
+    const scope = getIdentityScope(); const generation = getScopeGeneration(); if (!scope) return
+    const operationId = deleteTarget.id
+    setDeletingId(operationId); setError('')
+    try {
+      if (guest) deleteGuestConversation(operationId)
+      else await aiApi.remove(operationId)
+      if (!isCurrentScope(scope, generation)) return
+      setOperations((items) => items.filter((item) => item.id !== operationId))
+      if (current?.operation.id === operationId || activeOperationId === operationId) await resetWorkspace()
+      else setMessages((items) => items.filter((message) => message.kind !== 'proposal' || message.operationId !== operationId))
+      setDeleteTarget(null)
+      window.setTimeout(() => composerRef.current?.focus(), 0)
+    } catch (reason) { if (isCurrentScope(scope, generation)) handleRequestError(reason) }
+    finally { if (isCurrentScope(scope, generation)) setDeletingId(null) }
+  }
+
   const statusLabels = { PENDING: t.statusPending, PROPOSED: t.statusProposed, REFINING: t.statusRefining, READY_FOR_CONVERSION: t.statusReady, CONVERTING: t.statusConverting, PLAN_PREVIEW_READY: t.statusPreview, CONVERSION_FAILED: t.statusConversionFailed, COMPLETED: t.statusCompleted, REJECTED: t.statusRejected, FAILED: t.statusFailed, EXPIRED: t.statusExpired } as const
   const backControl = embedded ? <button className="btn btn-ghost ai-back-action" type="button" onClick={onBack}>← {t.back}</button> : <Link className="btn btn-ghost ai-back-action" to="/plans">← {t.back}</Link>
   const latestQuestion = [...messages].reverse().find((message) => message.role === 'assistant' && message.kind === 'text')
   const started = messages.some((message) => message.role === 'user')
+  const canRetryConversion = Boolean(
+    current?.proposal
+    && !conversion?.preview
+    && (conversionFailed || ['READY_FOR_CONVERSION', 'CONVERSION_FAILED'].includes(current.operation.status)),
+  )
 
   return <main className={embedded ? 'ai-proposal-page ai-proposal-page--embedded' : 'ai-proposal-page'}>
     <header className="ai-proposal-header"><div className="ai-header-left">{backControl}</div><div className="ai-header-title"><span className="eyebrow">{t.assistant}</span><h1>{t.title}</h1><p>{t.subtitle}</p></div><div className="ai-header-spacer" aria-hidden="true" /></header>
     <div className="ai-proposal-layout">
-      <aside className="ai-proposal-sidebar card"><h2>{t.resume}</h2>{operations.length ? operations.map((operation) => <div className="ai-operation-row" key={operation.id}><button type="button" onClick={() => void open(operation)}><strong>{operation.title ?? statusLabels[operation.status]}</strong><small>{statusLabels[operation.status]}</small></button></div>) : <p>{t.empty}</p>}</aside>
+      <aside className="ai-proposal-sidebar card"><h2>{t.resume}</h2>{operations.length ? operations.map((operation) => <div className="ai-operation-row" key={operation.id}><button type="button" onClick={() => void open(operation)}><strong>{operation.title ?? statusLabels[operation.status]}</strong><small>{statusLabels[operation.status]}</small></button><button type="button" className="ai-operation-delete" title={t.deleteConversation} aria-label={t.deleteConversation} disabled={deletingId === operation.id} onClick={() => setDeleteTarget(operation)}><TrashIcon width={15} height={15} /></button></div>) : <p>{t.empty}</p>}</aside>
       <section className="ai-proposal-main">
         {showSensitiveWarning ? <div className="ai-sensitive-warning" role="note"><span className="ai-sensitive-warning__icon" aria-hidden="true">⚠</span><p>{t.warning}</p><button type="button" className="ai-sensitive-warning__close" aria-label={t.dismissWarning} onClick={() => { dismissSensitiveWarning(); setShowSensitiveWarning(false) }}>×</button></div> : null}
         {guest && guestSessionState === 'error' ? <div className="ai-session-error" role="alert"><span>{t.sessionStartError}</span><button className="btn btn-ghost" type="button" onClick={() => void initializeGuestSession(true)}>{t.retrySession}</button></div> : null}
@@ -284,9 +323,11 @@ export function AiProposalView({ embedded = false, onBack }: { embedded?: boolea
           <div className="ai-composer-actions"><button className="btn btn-primary" disabled={busy || guestSessionState === 'loading' || guestSessionState === 'error'}>{busy || guestSessionState === 'loading' ? t.generating : started ? t.sendAnswer : t.send}</button>{clarificationCount >= 1 && latestQuestion ? <button className="btn btn-ghost" type="button" disabled={busy} onClick={() => void requestTurn('', true)}>{t.continueAssumptions}</button> : null}</div>
         </form> : mode ? <form className="card ai-refine-form ai-inline-followup" onSubmit={refine}><label className="field-wrap"><span>{mode === 'refine' ? t.instruction : t.editRequest}</span><textarea ref={composerRef} className="field-input" required maxLength={1500} value={instruction} onChange={(event) => setInstruction(event.target.value)} /></label><div><button className="btn btn-primary" disabled={busy}>{busy ? t.generating : t.sendAnswer}</button><button className="btn btn-ghost" type="button" onClick={() => { setMode(null); setInstruction('') }}>{t.cancel}</button></div></form> : null}
         {error && current?.proposal ? <p className="auth-error" role="alert">{error}</p> : null}
+        {canRetryConversion ? <div className="ai-conversion-action"><button className="btn btn-primary ai-conversion-retry" type="button" disabled={busy} onClick={() => void convert()}>{busy ? t.generatingStructure : t.retryConversion}</button></div> : null}
         {!conversion?.preview && current?.operation.status !== 'COMPLETED' ? <p className="ai-final-notice">{t.notCreated}</p> : null}
       </section>
     </div>
     <Modal open={confirmStartOver} title={t.startOverTitle} closeLabel="×" closeAriaLabel={t.cancel} onClose={() => setConfirmStartOver(false)} actions={<><button type="button" className="btn" onClick={() => setConfirmStartOver(false)}>{t.cancel}</button><button type="button" className="btn btn-danger" onClick={() => void resetWorkspace()}>{t.startOver}</button></>}><p>{t.startOverBody}</p><p>{t.startOverQuestion}</p></Modal>
+    <Modal open={Boolean(deleteTarget)} title={t.deleteConversation} closeLabel="×" closeAriaLabel={t.cancel} onClose={() => { if (!deletingId) setDeleteTarget(null) }} actions={<><button type="button" className="btn" disabled={Boolean(deletingId)} onClick={() => setDeleteTarget(null)}>{t.cancel}</button><button type="button" className="btn btn-danger" disabled={Boolean(deletingId)} onClick={() => void confirmDeleteConversation()}>{t.delete}</button></>}><p>{t.deleteConversationBody}</p></Modal>
   </main>
 }

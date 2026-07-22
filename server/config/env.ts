@@ -26,14 +26,14 @@ const schema = z.object({
   SMTP_USER: z.string().optional(),
   SMTP_PASSWORD: z.string().optional(),
   SMTP_FROM: z.string().email().optional(),
-  SMTP_FROM_NAME: z.string().default('NorthStar Planner'),
+  SMTP_FROM_NAME: z.string().default('ForgePlanner'),
   EMAIL_ENCRYPTION_KEY: z.string().optional(),
   AI_GUEST_SESSION_SIGNING_KEY: z.string().min(32).optional(),
   AI_PROVIDER: z.enum(['mock', 'openai']).default('mock'),
   OPENAI_API_KEY: z.string().min(20).optional(),
-  OPENAI_PROPOSAL_MODEL: z.string().min(1).default('gpt-5.6-sol'),
-  OPENAI_CONVERSION_MODEL: z.string().min(1).default('gpt-5.6-sol'),
-  OPENAI_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(120_000).default(20_000),
+  OPENAI_PROPOSAL_MODEL: z.string().min(1).default('gpt-5.6-terra'),
+  OPENAI_CONVERSION_MODEL: z.string().min(1).default('gpt-5.6-luna'),
+  OPENAI_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(120_000).default(60_000),
 }).superRefine((value, context) => {
   if (value.NODE_ENV === 'production' && !value.AI_GUEST_SESSION_SIGNING_KEY) {
     context.addIssue({

@@ -12,7 +12,7 @@ export class EmailConfigurationService {
   async publicConfiguration() {
     const record = await this.db.emailConfiguration.findUnique({ where: { environment: this.env.NODE_ENV } })
     if (!record) return { environment: this.env.NODE_ENV, enabled: Boolean(this.env.SMTP_HOST && this.env.SMTP_FROM), host: this.env.SMTP_HOST ?? '', port: this.env.SMTP_PORT, secure: this.env.SMTP_SECURE, username: this.env.SMTP_USER ?? '', senderEmail: this.env.SMTP_FROM ?? '', senderName: this.env.SMTP_FROM_NAME, replyTo: '', timeoutMs: 10_000, frontendUrl: this.env.APP_ORIGIN, resetExpiresMinutes: this.env.PASSWORD_RESET_TTL_MINUTES, passwordConfigured: Boolean(this.env.SMTP_PASSWORD), source: 'environment' as const }
-    return { environment: record.environment, enabled: record.enabled, host: record.host ?? '', port: record.port ?? 587, secure: record.secure, username: record.username ?? '', senderEmail: record.senderEmail ?? '', senderName: record.senderName ?? 'NorthStar Planner', replyTo: record.replyTo ?? '', timeoutMs: record.timeoutMs, frontendUrl: record.frontendUrl ?? this.env.APP_ORIGIN, resetExpiresMinutes: record.resetExpiresMinutes, passwordConfigured: Boolean(record.encryptedPassword), source: 'database' as const }
+    return { environment: record.environment, enabled: record.enabled, host: record.host ?? '', port: record.port ?? 587, secure: record.secure, username: record.username ?? '', senderEmail: record.senderEmail ?? '', senderName: record.senderName ?? 'ForgePlanner', replyTo: record.replyTo ?? '', timeoutMs: record.timeoutMs, frontendUrl: record.frontendUrl ?? this.env.APP_ORIGIN, resetExpiresMinutes: record.resetExpiresMinutes, passwordConfigured: Boolean(record.encryptedPassword), source: 'database' as const }
   }
 
   async update(input: EmailSettingsInput) {
@@ -34,7 +34,7 @@ export class EmailConfigurationService {
         if (!this.env.EMAIL_ENCRYPTION_KEY) throw new Error('Email encryption key is unavailable')
         password = decryptSecret(record.encryptedPassword, this.env.EMAIL_ENCRYPTION_KEY)
       }
-      return { host: record.host, port: record.port ?? 587, secure: record.secure, username: record.username ?? undefined, password, senderEmail: record.senderEmail, senderName: record.senderName ?? 'NorthStar Planner', replyTo: record.replyTo ?? undefined, timeoutMs: record.timeoutMs, source: 'database' }
+      return { host: record.host, port: record.port ?? 587, secure: record.secure, username: record.username ?? undefined, password, senderEmail: record.senderEmail, senderName: record.senderName ?? 'ForgePlanner', replyTo: record.replyTo ?? undefined, timeoutMs: record.timeoutMs, source: 'database' }
     }
     if (!this.env.SMTP_HOST || !this.env.SMTP_FROM) return null
     return { host: this.env.SMTP_HOST, port: this.env.SMTP_PORT, secure: this.env.SMTP_SECURE, username: this.env.SMTP_USER, password: this.env.SMTP_PASSWORD, senderEmail: this.env.SMTP_FROM, senderName: this.env.SMTP_FROM_NAME, timeoutMs: 10_000, source: 'environment' }

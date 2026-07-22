@@ -5,8 +5,10 @@ import type { AiPlanningProposal } from '../../../shared/ai-proposal-contract/in
 import { prepareVersionSnapshot } from '../plans/plan-version-integrity.js'
 import { PlanRevisionService } from '../plans/plan-revision.service.js'
 import { toPlanDto } from '../plans/plan.service.js'
+import { logger } from '../../config/logger.js'
 import type { AiIdentity } from './ai.service.js'
-import type { AiProposalProvider, PlanConversionResult } from './ai-provider.js'
+import { AiProviderOutputError, isAiProviderRateLimit, isAiProviderTimeout, safeAiProviderRequestReason, type AiProposalProvider, type PlanConversionResult } from './ai-provider.js'
+import { normalizeAiPlanDerivedFields } from './ai-plan-normalization.js'
 
 const CONVERSION_PROMPT_VERSION = 'canonical-plan-v8-1'
 const CONVERSION_LEASE_MS = 120_000
@@ -36,10 +38,32 @@ export function conversionPreview(plan: CanonicalPlan, checksum: string, proposa
 }
 
 function safeConversionError(error: unknown) {
-  if (error instanceof DOMException && error.name === 'AbortError') return new ApiError(504, 'AI_CONVERSION_TIMEOUT', 'Plan conversion timed out.')
+  if (isAiProviderRateLimit(error)) return new ApiError(429, 'AI_PROVIDER_RATE_LIMITED', 'The plan provider is temporarily rate limited.')
+  if (isAiProviderTimeout(error)) return new ApiError(504, 'AI_CONVERSION_TIMEOUT', 'Plan conversion timed out.')
   if (error instanceof ApiError) return error
-  if (error instanceof Error && error.message === 'AI_PLAN_INVALID_OUTPUT') return new ApiError(502, 'AI_CONVERSION_INVALID_OUTPUT', 'The provider returned an invalid plan structure.')
+  if (error instanceof AiProviderOutputError || error instanceof Error && error.message === 'AI_PLAN_INVALID_OUTPUT') return new ApiError(502, 'AI_CONVERSION_INVALID_OUTPUT', 'The provider returned an invalid plan structure.')
   return new ApiError(503, 'AI_CONVERSION_UNAVAILABLE', 'Plan conversion is temporarily unavailable.')
+}
+
+export function safeValidationPath(path: Array<string | number>) {
+  return path.map((part) => typeof part === 'number' ? part : /^[A-Za-z][A-Za-z0-9]*$/.test(part) ? part : '*').join('.') || 'root'
+}
+
+export function safeValidationFeedback(issues: Array<{ path: Array<string | number>; code: string }>) {
+  return issues.slice(0, 8).map((item) => `${item.code}@${safeValidationPath(item.path)}`).join(';')
+}
+
+export function logConversionFailure(input: { correlationId: string; provider: string; model: string; attempt: number; code: string; path?: string | null; reason?: string | null }) {
+  logger.warn({
+    event: 'ai_conversion_validation_failed',
+    correlationId: input.correlationId,
+    provider: input.provider,
+    model: input.model,
+    attempt: input.attempt,
+    safeErrorCode: input.code,
+    validationPath: input.path ?? null,
+    safeReason: input.reason ?? null,
+  }, 'AI plan conversion attempt failed validation')
 }
 
 export class AiPlanConversionService {
@@ -84,10 +108,18 @@ export class AiPlanConversionService {
       let validationCategory: string | undefined
       for (let attempt = 0; attempt < 2; attempt += 1) {
         if (!this.provider.convertAcceptedProposalToPlan) throw new ApiError(503, 'AI_CONVERSION_UNAVAILABLE', 'The configured provider does not support plan conversion.')
-        result = await this.provider.convertAcceptedProposalToPlan(reservation.proposal, { language: reservation.operation.selectedLanguage, correlationId: clientRequestId, signal: controller.signal, approvedContext: approvedContext(reservation.operation.sanitizedInputMetadata), now: this.now().toISOString(), repairReason: validationCategory })
-        const validation = safeValidateCanonicalPlan(result.plan)
+        try {
+          result = await this.provider.convertAcceptedProposalToPlan(reservation.proposal, { language: reservation.operation.selectedLanguage, correlationId: clientRequestId, signal: controller.signal, approvedContext: approvedContext(reservation.operation.sanitizedInputMetadata), now: this.now().toISOString(), repairReason: validationCategory })
+        } catch (error) {
+          const safe = safeConversionError(error)
+          logConversionFailure({ correlationId: clientRequestId, provider: this.provider.name, model: this.provider.conversionModel ?? this.provider.model, attempt: attempt + 1, code: safe.code, reason: error instanceof AiProviderOutputError ? `${error.safeCode}:${error.safeReason ?? 'unknown'}` : safeAiProviderRequestReason(error) })
+          if (attempt === 0 && error instanceof AiProviderOutputError) { validationCategory = `${error.safeCode}:${error.safeReason ?? 'unknown'}`; continue }
+          throw error
+        }
+        const validation = safeValidateCanonicalPlan(normalizeAiPlanDerivedFields(result.plan))
         if (validation.success && validation.plan.schemaVersion === 8 && validation.plan.metadata.origin === 'ai') { prepared = prepareVersionSnapshot(validation.plan); break }
-        validationCategory = validation.success ? 'PROTECTED_METADATA' : validation.issues.slice(0, 8).map((item) => item.code).join(',')
+        validationCategory = validation.success ? 'PROTECTED_METADATA' : safeValidationFeedback(validation.issues)
+        logConversionFailure({ correlationId: clientRequestId, provider: this.provider.name, model: this.provider.conversionModel ?? this.provider.model, attempt: attempt + 1, code: validation.success ? 'PROTECTED_METADATA' : validation.issues[0]?.code ?? 'AI_CONVERSION_INVALID_OUTPUT', path: validation.success ? 'metadata.origin' : safeValidationPath(validation.issues[0]?.path ?? []) })
       }
       if (!prepared || !result) throw new ApiError(502, 'AI_CONVERSION_INVALID_OUTPUT', 'The provider returned an invalid plan structure.')
     } catch (error) {

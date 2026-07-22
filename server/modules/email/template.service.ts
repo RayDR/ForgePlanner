@@ -4,7 +4,7 @@ import type { PrismaClient } from '@prisma/client'
 import { ApiError } from '../../http/errors.js'
 
 const TEMPLATE_KEY = 'password-reset'
-const DEFAULT_SUBJECT = 'Reset your NorthStar Planner password'
+const DEFAULT_SUBJECT = 'Reset your ForgePlanner password'
 export const PASSWORD_RESET_TAGS = ['displayName', 'resetUrl', 'expiresMinutes'] as const
 const REQUIRED_TAGS = ['resetUrl'] as const
 

@@ -5,7 +5,7 @@ import type { PrismaClient } from '@prisma/client'
 import type { AppEnv } from '../../config/env.js'
 import { ApiError } from '../../http/errors.js'
 import { csrfProtection, requireAuth } from '../auth/auth.middleware.js'
-import { AiProposalService } from './ai.service.js'
+import { AiProposalService, proposalProcessingLeaseMs } from './ai.service.js'
 import { AiGuestService, AI_GUEST_COOKIE, AI_GUEST_CSRF_COOKIE } from './ai-guest.service.js'
 import { confirmConversionSchema, conversionSchema, guestConversionSchema, guestRefinementSchema, guestTransitionSchema, listSchema, planningInputSchema, refinementSchema, revisionSchema, transitionSchema } from './ai.schemas.js'
 import { createAiProposalProvider } from './ai-provider.factory.js'
@@ -13,14 +13,22 @@ import { AiPlanConversionService } from './ai-conversion.service.js'
 
 const identity = (request: import('express').Request) => ({ actorUserId: request.auth!.actorUserId, effectiveUserId: request.auth!.effectiveUserId, impersonationSessionId: request.auth!.impersonationSessionId, ipAddress: request.ip, userAgent: request.get('user-agent')?.slice(0, 500) })
 const controllerFor = (request: import('express').Request) => { const controller = new AbortController(); request.once('aborted', () => controller.abort()); return controller }
+export const GUEST_CONVERSATION_REQUEST_LIMIT = 8
+const aiRateLimitHandler = (_request: import('express').Request, response: import('express').Response) => response.status(429).json({ error: { code: 'AI_RATE_LIMITED', message: 'The temporary AI request limit has been reached.' } })
 
 export function aiProposalRoutes(db: PrismaClient, env: AppEnv) {
-  const router = Router(); const provider = createAiProposalProvider(env); const service = new AiProposalService(db, provider); const conversion = new AiPlanConversionService(db, provider)
+  const router = Router(); const provider = createAiProposalProvider(env)
+  // A planning turn can make one structured-output repair attempt. Its
+  // processing lease must therefore outlive the provider's per-request
+  // timeout instead of aborting a healthy GPT response after 30 seconds.
+  const processingLeaseMs = proposalProcessingLeaseMs(env.OPENAI_TIMEOUT_MS)
+  const service = new AiProposalService(db, provider, undefined, processingLeaseMs); const conversion = new AiPlanConversionService(db, provider)
   const guest = env.AI_GUEST_SESSION_SIGNING_KEY ? new AiGuestService(provider, env.AI_GUEST_SESSION_SIGNING_KEY) : null
   const authKey = (request: import('express').Request) => request.auth?.effectiveUserId ?? ipKeyGenerator(request.ip ?? 'unknown')
   const guestKey = (request: import('express').Request) => `${ipKeyGenerator(request.ip ?? 'unknown')}:${createHash('sha256').update(request.cookies?.[AI_GUEST_COOKIE] ?? 'none').digest('hex').slice(0, 20)}`
   const generationLimit = rateLimit({ windowMs: 15 * 60_000, limit: 10, keyGenerator: authKey, standardHeaders: true, legacyHeaders: false })
-  const guestGenerationLimit = rateLimit({ windowMs: 15 * 60_000, limit: 3, keyGenerator: guestKey, standardHeaders: true, legacyHeaders: false })
+  const guestGenerationLimit = rateLimit({ windowMs: 15 * 60_000, limit: GUEST_CONVERSATION_REQUEST_LIMIT, keyGenerator: guestKey, standardHeaders: true, legacyHeaders: false, handler: aiRateLimitHandler })
+  const guestRefinementLimit = rateLimit({ windowMs: 15 * 60_000, limit: GUEST_CONVERSATION_REQUEST_LIMIT, keyGenerator: guestKey, standardHeaders: true, legacyHeaders: false, handler: aiRateLimitHandler })
   const refinementLimit = rateLimit({ windowMs: 15 * 60_000, limit: 20, keyGenerator: authKey, standardHeaders: true, legacyHeaders: false })
   const readLimit = rateLimit({ windowMs: 60_000, limit: 120, keyGenerator: authKey, standardHeaders: true, legacyHeaders: false })
   const transitionLimit = rateLimit({ windowMs: 60_000, limit: 30, keyGenerator: authKey, standardHeaders: true, legacyHeaders: false })
@@ -36,7 +44,7 @@ export function aiProposalRoutes(db: PrismaClient, env: AppEnv) {
   })
   const guestSession = (request: import('express').Request) => { if (!guest) throw new ApiError(503, 'AI_GUEST_NOT_CONFIGURED', 'Guest proposal sessions are unavailable.'); return guest.verifySession(request.cookies?.[AI_GUEST_COOKIE], request.cookies?.[AI_GUEST_CSRF_COOKIE], request.get('x-ai-guest-csrf')) }
   router.post('/guest/plan-proposals', guestGenerationLimit, async (request, response) => { const controller = controllerFor(request); response.status(201).json(await guest!.generate(guestSession(request), planningInputSchema.parse(request.body), controller.signal)) })
-  router.post('/guest/plan-proposals/:operationId/refine', guestGenerationLimit, async (request, response) => { const controller = controllerFor(request); response.json(await guest!.refine(guestSession(request), String(request.params.operationId), guestRefinementSchema.parse(request.body), controller.signal)) })
+  router.post('/guest/plan-proposals/:operationId/refine', guestRefinementLimit, async (request, response) => { const controller = controllerFor(request); response.json(await guest!.refine(guestSession(request), String(request.params.operationId), guestRefinementSchema.parse(request.body), controller.signal)) })
   router.post('/guest/plan-proposals/:operationId/ready', guestTransitionLimit, (request, response) => { const session = guestSession(request); response.json(guest!.transition(session, String(request.params.operationId), guestTransitionSchema.parse(request.body), 'READY_FOR_CONVERSION')) })
   router.post('/guest/plan-proposals/:operationId/reject', guestTransitionLimit, (request, response) => { const session = guestSession(request); response.json(guest!.transition(session, String(request.params.operationId), guestTransitionSchema.parse(request.body), 'REJECTED')) })
   router.post('/guest/plan-proposals/:operationId/convert', guestConversionLimit, async (request, response) => { const controller = controllerFor(request); response.json(await guest!.convert(guestSession(request), String(request.params.operationId), guestConversionSchema.parse(request.body), controller.signal)) })

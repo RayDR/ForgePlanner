@@ -1,6 +1,6 @@
 Hello {{displayName}},
 
-Use this secure link to reset your NorthStar Planner password:
+Use this secure link to reset your ForgePlanner password:
 {{resetUrl}}
 
 It expires in {{expiresMinutes}} minutes and can be used once. If you did not request this change, ignore this message.

@@ -2,6 +2,20 @@ import { describe, expect, it } from 'vitest'
 import { AiGuestService } from './ai-guest.service.js'
 import { MockAiProposalProvider } from './mock-ai-proposal.provider.js'
 import { proposalInputSchema } from './ai.schemas.js'
+import type { AiPlanningProposal } from '../../../shared/ai-proposal-contract/index.js'
+import type { CanonicalPlan } from '../../../shared/plan-contract/index.js'
+import type { PlanConversionContext } from './ai-provider.js'
+
+class MismatchedSavingsProvider extends MockAiProposalProvider {
+  conversionCalls = 0
+  override async convertAcceptedProposalToPlan(proposal: AiPlanningProposal, context: PlanConversionContext) {
+    this.conversionCalls += 1
+    const result = await super.convertAcceptedProposalToPlan(proposal, context)
+    const plan = result.plan as CanonicalPlan
+    const monthId = plan.project.startDate.slice(0, 7)
+    return { ...result, plan: { ...plan, project: { ...plan.project, savingsPlan: { ...plan.project.savingsPlan, enabled: true, mode: 'monthly-target' as const, defaultMonthlyTarget: 500, targetTotal: 250, monthlyEntries: [{ monthId, target: 500, actual: 0 }] } } } }
+  }
+}
 
 const key = 'a-secure-test-signing-key-with-more-than-32-characters'
 const input = () => proposalInputSchema.parse({ clientRequestId: crypto.randomUUID(), goal: 'Improve my career over six months', preferredLanguage: 'en', locale: 'en', constraints: [], nonNegotiables: [], planIntensity: 'balanced' })
@@ -17,5 +31,12 @@ describe('signed guest AI proposals', () => {
     await expect(service.generate(claims, input())).rejects.toMatchObject({ code: 'AI_PROPOSAL_LIMIT_REACHED' })
     const created = await service.generate(claims, { ...input(), clientRequestId: crypto.randomUUID() }).catch(() => null)
     expect(created).toBeNull()
+  })
+  it('repairs a derived savings total locally without a second provider request', async () => {
+    const provider = new MismatchedSavingsProvider(); const service = new AiGuestService(provider, key); const { claims } = session(service)
+    const created = await service.generate(claims, input()); const ready = service.transition(claims, created.operation.id, { expectedRevision: 1, currentProposal: created.proposal!, signedProposalToken: created.signedProposalToken }, 'READY_FOR_CONVERSION')
+    const result = await service.convert(claims, created.operation.id, { clientRequestId: crypto.randomUUID(), currentProposal: ready.proposal!, signedProposalToken: ready.signedProposalToken })
+    expect(result).toMatchObject({ status: 'PLAN_PREVIEW_READY', plan: { project: { savingsPlan: { targetTotal: 500 } } } })
+    expect(provider.conversionCalls).toBe(1)
   })
 })
