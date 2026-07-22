@@ -5,14 +5,18 @@ import { parsePlanningTurn, type AiPlanningProposal, type PlanningTurn } from '.
 import { assertSafeAiInput } from './ai-input-safety.js'
 import { fingerprint, prepareProposal } from './ai-integrity.js'
 import { detectProposalLanguage, selectProposalLanguage } from './ai-language.js'
-import type { AiProposalProvider } from './ai-provider.js'
+import { isAiProviderTimeout, type AiProposalProvider } from './ai-provider.js'
 import type { PlanningInput } from './ai.schemas.js'
 
 export type AiIdentity = { actorUserId: string; effectiveUserId: string; impersonationSessionId?: string; ipAddress?: string; userAgent?: string }
-const LEASE_MS = 30_000; const PROPOSAL_TTL_MS = 30 * 24 * 60 * 60 * 1000; const READY_TTL_MS = 90 * 24 * 60 * 60 * 1000
+const DEFAULT_PROCESSING_LEASE_MS = 75_000; const PROPOSAL_TTL_MS = 30 * 24 * 60 * 60 * 1000; const READY_TTL_MS = 90 * 24 * 60 * 60 * 1000
+
+export function proposalProcessingLeaseMs(providerTimeoutMs: number) {
+  return (providerTimeoutMs * 2) + 15_000
+}
 
 function safeMetadata(input: PlanningInput, selectedLanguage: 'EN' | 'ES') {
-  return { inputLength: input.goal.length + (input.additionalContext?.length ?? 0) + input.conversation.reduce((total, item) => total + item.content.length, 0), selectedLanguage, hasStartDate: Boolean(input.startDate), hasTargetDate: Boolean(input.targetDate), hasBudget: input.monthlyBudget != null, constraintCount: input.constraints.length, nonNegotiableCount: input.nonNegotiables.length, intensity: input.planIntensity, clarificationCount: input.clarificationCount }
+  return { inputLength: input.goal.length + (input.additionalContext?.length ?? 0) + input.conversation.reduce((total, item) => total + item.content.length, 0), selectedLanguage, hasStartDate: Boolean(input.startDate), hasTargetDate: Boolean(input.targetDate), hasBudget: input.monthlyBudget != null, constraintCount: input.constraints.length, nonNegotiableCount: input.nonNegotiables.length, intensity: input.planIntensity, clarificationCount: input.clarificationCount, approvedContext: { startDate: input.startDate ?? null, targetDate: input.targetDate ?? null, durationMonths: input.durationMonths ?? null, hoursPerWeek: input.hoursPerWeek ?? null, monthlyBudget: input.monthlyBudget ?? null, currency: input.currency ?? null, planningScope: input.planningScope ?? 'balanced', detailLevel: input.detailLevel ?? 'detailed', financialMode: input.financialMode ?? 'none', savingsGoal: input.savingsGoal ?? null, intensity: input.planIntensity } }
 }
 
 function metadata(operation: AiOperation & { currentProposalRevision?: { revision: number } | null; readyProposalRevision?: { revision: number } | null }) {
@@ -21,7 +25,12 @@ function metadata(operation: AiOperation & { currentProposalRevision?: { revisio
 type GenerationResponse = { turn: PlanningTurn; operation: ReturnType<typeof metadata>; proposal: Prisma.JsonValue | null }
 
 export class AiProposalService {
-  constructor(private db: PrismaClient, private provider: AiProposalProvider, private now = () => new Date()) {}
+  constructor(
+    private db: PrismaClient,
+    private provider: AiProposalProvider,
+    private now = () => new Date(),
+    private processingLeaseMs = DEFAULT_PROCESSING_LEASE_MS,
+  ) {}
 
   async generate(ownerUserId: string, input: PlanningInput, identity: AiIdentity, signal?: AbortSignal): Promise<GenerationResponse> {
     assertSafeAiInput([input.goal, input.additionalContext ?? '', ...input.constraints, ...input.nonNegotiables, ...input.conversation.map((item) => item.content)])
@@ -34,9 +43,9 @@ export class AiProposalService {
         if (existing.requestFingerprint !== requestFingerprint) throw new ApiError(409, 'AI_PROPOSAL_CONFLICT', 'This request identifier was already used with different input.')
         return { cached: existing, requestId: existing.processingRequestId }
       }
-      const active = await tx.aiOperation.count({ where: { ownerUserId, status: { in: ['DRAFT','PENDING','PROPOSED','REFINING','READY_FOR_CONVERSION'] }, expiresAt: { gt: this.now() } } })
+      const active = await tx.aiOperation.count({ where: { ownerUserId, status: { in: ['DRAFT','PENDING','PROPOSED','REFINING','READY_FOR_CONVERSION','CONVERTING','PLAN_PREVIEW_READY','CONVERSION_FAILED'] }, expiresAt: { gt: this.now() } } })
       if (active >= 10) throw new ApiError(429, 'AI_PROPOSAL_LIMIT_REACHED', 'The active proposal limit has been reached.')
-      const requestId = randomUUID(); const now = this.now(); const lease = new Date(now.getTime() + LEASE_MS)
+      const requestId = randomUUID(); const now = this.now(); const lease = new Date(now.getTime() + this.processingLeaseMs)
       const operation = await tx.aiOperation.create({ data: { ownerUserId, status: 'PENDING', selectedLanguage: selected, detectedLanguage: detected, provider: this.provider.name, model: this.provider.model, promptTemplateVersion: 'planning-turn-v1', sanitizedInputMetadata: safeMetadata(input, selected), requestFingerprint, generationClientRequestId: input.clientRequestId, processingRequestId: requestId, processingLeaseExpiresAt: lease, expiresAt: new Date(now.getTime() + PROPOSAL_TTL_MS), requests: { create: { id: requestId, ownerUserId, type: 'GENERATION', clientRequestId: input.clientRequestId, requestFingerprint, status: 'RESERVED', leaseExpiresAt: lease } } } })
       return { operation, requestId }
     })
@@ -77,7 +86,7 @@ export class AiProposalService {
       if (operation.status !== 'PROPOSED') throw new ApiError(409, 'AI_PROPOSAL_INVALID_STATE', 'This proposal cannot be refined in its current state.')
       if (operation.currentProposalRevision?.revision !== input.expectedRevision) throw new ApiError(409, 'AI_PROPOSAL_CONFLICT', 'The proposal revision is stale.')
       if (operation.refinementCount >= 8) throw new ApiError(429, 'AI_PROPOSAL_REFINEMENT_LIMIT', 'The refinement limit has been reached.')
-      const requestId = randomUUID(); const lease = new Date(this.now().getTime() + LEASE_MS)
+      const requestId = randomUUID(); const lease = new Date(this.now().getTime() + this.processingLeaseMs)
       await tx.aiOperationRequest.create({ data: { id: requestId, ownerUserId, aiOperationId: operation.id, type: 'REFINEMENT', clientRequestId: input.clientRequestId, requestFingerprint, expectedRevision: input.expectedRevision, status: 'RESERVED', leaseExpiresAt: lease } })
       const reserved = await tx.aiOperation.updateMany({ where: { id: operation.id, ownerUserId, status: 'PROPOSED', currentProposalRevisionId: operation.currentProposalRevisionId }, data: { status: 'REFINING', processingRequestId: requestId, processingLeaseExpiresAt: lease } })
       if (reserved.count !== 1) throw new ApiError(409, 'AI_PROPOSAL_CONFLICT', 'The proposal changed concurrently.')
@@ -134,8 +143,8 @@ export class AiProposalService {
   private async requireOwner(ownerUserId: string, operationId: string) { if (!await this.db.aiOperation.findFirst({ where: { id: operationId, ownerUserId }, select: { id: true } })) throw new ApiError(404, 'AI_PROPOSAL_NOT_FOUND', 'Proposal not found.') }
   private async failGeneration(operationId: string, requestId: string, code: string) { await this.db.$transaction([this.db.aiOperation.updateMany({ where: { id: operationId, status: 'PENDING', processingRequestId: requestId }, data: { status: 'FAILED', errorCode: code, failedAt: this.now(), processingRequestId: null, processingLeaseExpiresAt: null, expiresAt: new Date(this.now().getTime() + 7 * 24 * 60 * 60 * 1000) } }), this.db.aiOperationRequest.updateMany({ where: { id: requestId, status: 'RESERVED' }, data: { status: 'FAILED', safeErrorCode: code, completedAt: this.now() } })]) }
   private async failRefinement(operationId: string, requestId: string, code: string) { await this.db.$transaction([this.db.aiOperation.updateMany({ where: { id: operationId, status: 'REFINING', processingRequestId: requestId }, data: { status: 'PROPOSED', processingRequestId: null, processingLeaseExpiresAt: null } }), this.db.aiOperationRequest.updateMany({ where: { id: requestId, status: 'RESERVED' }, data: { status: 'FAILED', safeErrorCode: code, completedAt: this.now() } })]) }
-  private providerError(error: unknown) { return error instanceof DOMException && error.name === 'AbortError' ? 'AI_PROVIDER_TIMEOUT' : error instanceof Error && error.message === 'AI_PROPOSAL_INVALID_OUTPUT' ? 'AI_PROPOSAL_INVALID_OUTPUT' : 'AI_PROVIDER_UNAVAILABLE' }
+  private providerError(error: unknown) { return isAiProviderTimeout(error) ? 'AI_PROVIDER_TIMEOUT' : error instanceof Error && error.message === 'AI_PROPOSAL_INVALID_OUTPUT' ? 'AI_PROPOSAL_INVALID_OUTPUT' : 'AI_PROVIDER_UNAVAILABLE' }
   private providerApiError(error: unknown) { const code = this.providerError(error); if (code === 'AI_PROPOSAL_INVALID_OUTPUT') return new ApiError(502, code, 'The proposal provider returned invalid content.'); return new ApiError(code === 'AI_PROVIDER_TIMEOUT' ? 504 : 503, code, code === 'AI_PROVIDER_TIMEOUT' ? 'The proposal provider timed out.' : 'The proposal provider is unavailable.') }
-  private async callProvider<T>(call: (signal: AbortSignal) => Promise<T>, callerSignal?: AbortSignal) { const controller = new AbortController(); const abort = () => controller.abort(); callerSignal?.addEventListener('abort', abort, { once: true }); const timer = setTimeout(() => controller.abort(), LEASE_MS); try { return await call(controller.signal) } finally { clearTimeout(timer); callerSignal?.removeEventListener('abort', abort) } }
+  private async callProvider<T>(call: (signal: AbortSignal) => Promise<T>, callerSignal?: AbortSignal) { const controller = new AbortController(); const abort = () => controller.abort(); callerSignal?.addEventListener('abort', abort, { once: true }); const timer = setTimeout(() => controller.abort(), this.processingLeaseMs); try { return await call(controller.signal) } finally { clearTimeout(timer); callerSignal?.removeEventListener('abort', abort) } }
   private audit(tx: Prisma.TransactionClient, identity: AiIdentity, action: string, operationId: string, safe: Record<string, string | number>) { return tx.auditLog.create({ data: { action, actorUserId: identity.actorUserId, effectiveUserId: identity.effectiveUserId, targetType: 'ai_operation', targetId: operationId, metadata: safe, impersonationSessionId: identity.impersonationSessionId, ipAddress: identity.ipAddress, userAgent: identity.userAgent } }) }
 }

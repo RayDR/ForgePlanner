@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { aiPlanningProposalSchema, aiProposalJsonSchema, parseAiPlanningProposal } from './index.js'
+import { aiPlanningProposalSchema, aiProposalJsonSchema, parseAiPlanningProposal, planningTurnJsonSchema } from './index.js'
 
 const fixture = (language: 'en' | 'es' = 'en') => ({
   proposalSchemaVersion: 1 as const,
@@ -27,5 +27,8 @@ describe('human-readable AI proposal contract', () => {
   it('serializes deterministically and exports JSON Schema', () => {
     expect(parseAiPlanningProposal(Object.fromEntries(Object.entries(fixture()).reverse())).serialized).toBe(parseAiPlanningProposal(fixture()).serialized)
     expect(aiProposalJsonSchema()).toMatchObject({ type: 'object' })
+    const turnSchema = planningTurnJsonSchema()
+    expect(JSON.stringify(turnSchema)).not.toContain('oneOf')
+    expect(turnSchema).toMatchObject({ properties: { turn: { required: ['action', 'question', 'suggestedAnswers', 'missingInformation', 'proposal', 'language'] } } })
   })
 })

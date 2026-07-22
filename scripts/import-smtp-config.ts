@@ -32,7 +32,7 @@ async function main() {
   const [{ PrismaClient }, { loadEnv }, { EmailConfigurationService }] = await Promise.all([import('@prisma/client'), import('../server/config/env.js'), import('../server/modules/email/email-configuration.service.js')])
   const db = new PrismaClient(); const env = loadEnv(process.env)
   try {
-    await new EmailConfigurationService(db, env).update({ host, port: Number(source.SMTP_PORT || 587), secure: source.SMTP_SECURE === 'true', username, password, senderEmail, senderName: 'NorthStar Planner', replyTo: senderEmail, enabled: true, timeoutMs: 10_000, frontendUrl: 'https://planner.domoforge.com', resetExpiresMinutes: 30 })
+    await new EmailConfigurationService(db, env).update({ host, port: Number(source.SMTP_PORT || 587), secure: source.SMTP_SECURE === 'true', username, password, senderEmail, senderName: 'ForgePlanner', replyTo: senderEmail, enabled: true, timeoutMs: 10_000, frontendUrl: 'https://planner.domoforge.com', resetExpiresMinutes: 30 })
     console.log('SMTP configuration imported and password encrypted successfully.')
   } finally { await db.$disconnect() }
 }

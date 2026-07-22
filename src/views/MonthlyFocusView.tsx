@@ -1,10 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type * as React from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
+import { useForgePlannerStore } from "../hooks/useForgePlannerStore";
 import { useRoadmapStore } from "../hooks/useRoadmapStore";
+import { MonthlyKanban } from "../kanban/MonthlyKanban";
 import { activitiesForMonth, buildYearMonths } from "../utils/dateUtils";
 import {
   getActivityDisplayId,
+  getActivityStatusForMonth,
   getCalculatedActivityProgress,
   getEffectiveMonthlySavingsTarget,
   getSavingsEntry,
@@ -12,12 +15,14 @@ import {
 } from "../utils/roadmapModel";
 import { Card } from "../ui/Card";
 import { MonthTab } from "../ui/MonthTab";
-import { ActivityIcon, PlusIcon, Trash2Icon } from "../ui/icons";
+import { ActivityIcon, KanbanIcon, ListIcon, PlusIcon, Trash2Icon } from "../ui/icons";
 import { formatCurrency } from "../utils/progressUtils";
 import type { MonthlyActivityEntry } from "../types/roadmap";
 import type { RecurrenceFrequency } from "../types/roadmap";
 import { RecurrenceSelect } from "../ui/RecurrenceSelect";
 import { categoryMeta, getCategoryMeta } from "../data/northstarMockData";
+import { CategoryFilter } from "../ui/CategoryFilter";
+import { customColorClass } from "../ui/customColor";
 
 function monthEndDate(monthId: string) {
   const [year, month] = monthId.split("-").map(Number);
@@ -46,6 +51,13 @@ export function MonthlyFocusView() {
     (state) => state.updateMonthlyEntry,
   );
   const createActivity = useRoadmapStore((state) => state.createActivity);
+  const activePlanId = useForgePlannerStore((state) => state.activePlanId);
+  const monthlyViewPreference = useForgePlannerStore((state) =>
+    state.activePlanId
+      ? state.plans.find((plan) => plan.id === state.activePlanId)?.monthlyViewPreference ?? "list"
+      : "list",
+  );
+  const setMonthlyViewPreference = useForgePlannerStore((state) => state.setMonthlyViewPreference);
   const activeMonthId = monthId ?? selectedMonthId;
   const activeYear = Number(activeMonthId.slice(0, 4));
   const requestedHighlight = (
@@ -61,6 +73,8 @@ export function MonthlyFocusView() {
     entry: MonthlyActivityEntry;
   } | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
+  const [categoryFilter, setCategoryFilter] = useState("");
+  const viewMode = monthlyViewPreference;
   const availableCategories = project.categoryDefinitions?.length
     ? project.categoryDefinitions
     : Object.values(categoryMeta);
@@ -121,6 +135,10 @@ export function MonthlyFocusView() {
   const monthActivities = useMemo(
     () => activitiesForMonth(activities, activeMonthId),
     [activities, activeMonthId],
+  );
+  const visibleMonthActivities = useMemo(
+    () => categoryFilter ? monthActivities.filter((activity) => activity.category === categoryFilter) : monthActivities,
+    [categoryFilter, monthActivities],
   );
   const activeMonth = monthOptions.find((month) => month.id === activeMonthId);
   const savingsEntry = getSavingsEntry(project, activeMonthId);
@@ -208,6 +226,10 @@ export function MonthlyFocusView() {
           milestone: "Hitos",
           past: "Este mes ya pasó. Puedes seguir editándolo sin restricciones.",
           create: "Nueva actividad",
+          addActivity: "Agregar actividad",
+          addFirstActivity: "Agregar la primera actividad",
+          listView: "Lista",
+          kanbanView: "Kanban",
           addContribution: "Registrar aportación",
           addExpense: "Registrar gasto",
           activityTitle: "Título",
@@ -239,6 +261,10 @@ export function MonthlyFocusView() {
           milestone: "Milestones",
           past: "This month is in the past. You can still edit it without restrictions.",
           create: "New activity",
+          addActivity: "Add activity",
+          addFirstActivity: "Add the first activity",
+          listView: "List",
+          kanbanView: "Kanban",
           addContribution: "Add contribution",
           addExpense: "Add expense",
           activityTitle: "Title",
@@ -326,6 +352,41 @@ export function MonthlyFocusView() {
     setCreateOpen(true);
   }
 
+  function selectViewMode(mode: "list" | "kanban") {
+    if (activePlanId) setMonthlyViewPreference(activePlanId, mode);
+  }
+
+  function activityCreator() {
+    return (
+      <form className="monthly-inline-create" onSubmit={(event) => { event.preventDefault(); submitActivity(); }}>
+        <div className="form-grid monthly-activity-primary-fields">
+          <label className="field-wrap">
+            <span>{t.activityTitle}</span>
+            <input autoFocus className="field-input" value={activityDraft.title} onChange={(event) => setActivityDraft((draft) => ({ ...draft, title: event.target.value }))} />
+          </label>
+          <label className="field-wrap">
+            <span>{t.category}</span>
+            <select className="field-input" value={activityDraft.category} onChange={(event) => setActivityDraft((draft) => ({ ...draft, category: event.target.value }))}>
+              {availableCategories.map((category) => <option key={category.key} value={category.key}>{category.label}</option>)}
+            </select>
+          </label>
+          <label className="field-wrap"><span>{locale === "es" ? "Fecha de inicio" : "Start date"}</span><input className="field-input" type="date" value={activityDraft.startDate} onChange={(event) => setActivityDraft((draft) => ({ ...draft, startDate: event.target.value, endDate: event.target.value > draft.endDate ? event.target.value : draft.endDate }))} /></label>
+          <label className="field-wrap"><span>{locale === "es" ? "Fecha de fin" : "End date"}</span><input className="field-input" type="date" min={activityDraft.startDate} value={activityDraft.endDate} onChange={(event) => setActivityDraft((draft) => ({ ...draft, endDate: event.target.value }))} /></label>
+          <label className="field-wrap"><span>{locale === "es" ? "Repetir" : "Repeat"}</span><RecurrenceSelect locale={locale} value={activityDraft.recurrenceFrequency} startDate={activityDraft.startDate} maximumEndDate={project.endDate} onChange={(recurrenceFrequency) => setActivityDraft((draft) => ({ ...draft, recurrenceFrequency }))} /></label>
+          {activityDraft.recurrenceFrequency !== "none" ? <label className="field-wrap"><span>{locale === "es" ? "Repetir hasta" : "Repeat until"}</span><input className="field-input" type="date" min={activityDraft.startDate} max={project.endDate} value={activityDraft.recurrenceEndDate} onChange={(event) => setActivityDraft((draft) => ({ ...draft, recurrenceEndDate: event.target.value }))} /></label> : null}
+        </div>
+        <label className="field-wrap activity-create-description">
+          <span>{t.description}</span>
+          <textarea className="field-input" value={activityDraft.description} onChange={(event) => setActivityDraft((draft) => ({ ...draft, description: event.target.value }))} />
+        </label>
+        <div className="row-wrap monthly-create-actions">
+          <button type="button" className="btn btn-ghost" onClick={() => setCreateOpen(false)}>{t.cancel}</button>
+          <button type="submit" className="btn btn-primary" disabled={!activityDraft.title.trim()}>{t.create}</button>
+        </div>
+      </form>
+    );
+  }
+
   return (
     <div className="monthly-layout">
       <aside className="month-sidebar card">
@@ -384,15 +445,6 @@ export function MonthlyFocusView() {
           <div className="monthly-header-actions">
             <button
               type="button"
-              className="btn btn-primary monthly-create-trigger"
-              onClick={() => openActivityCreator()}
-              aria-label={t.create}
-              title={t.create}
-            >
-              <PlusIcon width={17} height={17} />
-            </button>
-            <button
-              type="button"
               className={
                 analyticsOpen
                   ? "btn btn-active monthly-analytics-trigger"
@@ -405,92 +457,6 @@ export function MonthlyFocusView() {
             </button>
           </div>
         </Card>
-        {createOpen ? (
-          <Card className="monthly-create-form">
-            <div className="monthly-create-form-head">
-              <strong>{t.create}</strong>
-              <button
-                type="button"
-                className="btn btn-ghost"
-                onClick={() => setCreateOpen(false)}
-              >
-                ×
-              </button>
-            </div>
-            <div className="form-grid">
-              <label className="field-wrap">
-                <span>{t.activityTitle}</span>
-                <input
-                  autoFocus
-                  className="field-input"
-                  value={activityDraft.title}
-                  onChange={(event) =>
-                    setActivityDraft((draft) => ({
-                      ...draft,
-                      title: event.target.value,
-                    }))
-                  }
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter") submitActivity();
-                  }}
-                />
-              </label>
-              <label className="field-wrap">
-                <span>{t.category}</span>
-                <select
-                  className="field-input"
-                  value={activityDraft.category}
-                  onChange={(event) =>
-                    setActivityDraft((draft) => ({
-                      ...draft,
-                      category: event.target.value,
-                    }))
-                  }
-                >
-                  {availableCategories.map((category) => (
-                    <option key={category.key} value={category.key}>
-                      {category.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="field-wrap activity-create-description">
-                <span>{t.description}</span>
-                <textarea
-                  className="field-input"
-                  value={activityDraft.description}
-                  onChange={(event) =>
-                    setActivityDraft((draft) => ({
-                      ...draft,
-                      description: event.target.value,
-                    }))
-                  }
-                />
-              </label>
-              <label className="field-wrap"><span>{locale === "es" ? "Fecha de inicio" : "Start date"}</span><input className="field-input" type="date" value={activityDraft.startDate} onChange={(event) => setActivityDraft((draft) => ({ ...draft, startDate: event.target.value, endDate: event.target.value > draft.endDate ? event.target.value : draft.endDate }))} /></label>
-              <label className="field-wrap"><span>{locale === "es" ? "Fecha de fin" : "End date"}</span><input className="field-input" type="date" min={activityDraft.startDate} value={activityDraft.endDate} onChange={(event) => setActivityDraft((draft) => ({ ...draft, endDate: event.target.value }))} /></label>
-              <label className="field-wrap"><span>{locale === "es" ? "Repetir" : "Repeat"}</span><RecurrenceSelect locale={locale} value={activityDraft.recurrenceFrequency} startDate={activityDraft.startDate} maximumEndDate={project.endDate} onChange={(recurrenceFrequency) => setActivityDraft((draft) => ({ ...draft, recurrenceFrequency }))} /></label>
-              {activityDraft.recurrenceFrequency !== "none" ? <label className="field-wrap"><span>{locale === "es" ? "Repetir hasta" : "Repeat until"}</span><input className="field-input" type="date" min={activityDraft.startDate} max={project.endDate} value={activityDraft.recurrenceEndDate} onChange={(event) => setActivityDraft((draft) => ({ ...draft, recurrenceEndDate: event.target.value }))} /></label> : null}
-            </div>
-            <div className="row-wrap monthly-create-actions">
-              <button
-                type="button"
-                className="btn btn-ghost"
-                onClick={() => setCreateOpen(false)}
-              >
-                {t.cancel}
-              </button>
-              <button
-                type="button"
-                className="btn btn-primary"
-                onClick={submitActivity}
-                disabled={!activityDraft.title.trim()}
-              >
-                {t.create}
-              </button>
-            </div>
-          </Card>
-        ) : null}
         {showSavingsPanel ? (
           <Card
             className={`monthly-savings-compact monthly-savings-${savingsMode}`}
@@ -589,12 +555,31 @@ export function MonthlyFocusView() {
         ) : null}
         <section className="monthly-work-panel">
           <header>
-            <h3>{t.activities}</h3>
-            {monthActivities.length ? (
-              <span>{monthActivities.length}</span>
-            ) : null}
+            <div className="monthly-work-heading">
+              <h3>{t.activities}</h3>
+              {visibleMonthActivities.length ? <span>{visibleMonthActivities.length}</span> : null}
+            </div>
+            <div className="monthly-view-toggle" role="tablist" aria-label={locale === "es" ? "Vista de actividades" : "Activity view"}>
+              <button type="button" role="tab" aria-selected={viewMode === "list"} className={viewMode === "list" ? "is-active" : ""} onClick={() => selectViewMode("list")}>
+                <ListIcon width={15} height={15} />
+                {t.listView}
+              </button>
+              <button type="button" role="tab" aria-selected={viewMode === "kanban"} className={viewMode === "kanban" ? "is-active" : ""} onClick={() => selectViewMode("kanban")}>
+                <KanbanIcon width={15} height={15} />
+                {t.kanbanView}
+              </button>
+            </div>
+            <CategoryFilter categories={availableCategories} value={categoryFilter} locale={locale} onChange={setCategoryFilter} />
           </header>
-          {monthActivities.length ? (
+          {viewMode === "kanban" ? (
+            <MonthlyKanban
+              monthId={activeMonthId}
+              activities={visibleMonthActivities}
+              statuses={project.statusDefinitions}
+              locale={locale}
+              onOpen={openActivity}
+            />
+          ) : visibleMonthActivities.length ? (
             <div className="monthly-work-table">
               <div className="monthly-work-head">
                 <span>{t.work}</span>
@@ -604,8 +589,8 @@ export function MonthlyFocusView() {
                 <span>{t.category}</span>
                 <span />
               </div>
-              {monthActivities.map((activity) => {
-                const entry = activity.monthlyEntries[activeMonthId];
+              {visibleMonthActivities.map((activity) => {
+                const activityStatus = getActivityStatusForMonth(activity, activeMonthId) ?? "planned";
                 const statusColor =
                   project.statusDefinitions.find(
                     (status) => status.id === activity.statusId,
@@ -614,7 +599,7 @@ export function MonthlyFocusView() {
                 return (
                   <article
                     key={activity.id}
-                    className={`monthly-work-row monthly-work-${activity.colorKey}`}
+                    className={`monthly-work-row monthly-work-${activity.colorKey} ${customColorClass(activity.colorHex)}`}
                   >
                     <button
                       type="button"
@@ -630,12 +615,12 @@ export function MonthlyFocusView() {
                       <i
                         className={`monthly-badge monthly-badge-${statusColor}`}
                       >
-                        {entry?.status}
+                        {activityStatus}
                       </i>
                     </span>
                     <span>
                       <i
-                        className={`monthly-badge monthly-badge-${category.tone}`}
+                        className={`monthly-badge monthly-badge-${category.tone} ${customColorClass(category.colorHex)}`}
                       >
                         {category.label}
                       </i>
@@ -654,7 +639,15 @@ export function MonthlyFocusView() {
               })}
             </div>
           ) : (
-            <p className="monthly-empty">{t.empty}</p>
+            <p className="monthly-empty">{categoryFilter ? (locale === "es" ? "No hay actividades de esta categoría en el mes." : "No activities in this category for this month.") : t.empty}</p>
+          )}
+          {createOpen ? activityCreator() : (
+            <div className="monthly-add-activity">
+              <button type="button" onClick={() => openActivityCreator()}>
+                <PlusIcon width={16} height={16} />
+                <span>{monthActivities.length ? t.addActivity : t.addFirstActivity}</span>
+              </button>
+            </div>
           )}
         </section>
         {undoEntry ? (

@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { Locale } from '../i18n'
 import type { CategoryMeta } from '../types/roadmap'
+import { ColorPicker } from './ColorPicker'
 
 interface CategorySource {
   id: string
@@ -14,8 +15,6 @@ interface PlanCategoryEditorProps {
   sources: CategorySource[]
   onChange: (categories: CategoryMeta[]) => void
 }
-
-const tones: CategoryMeta['tone'][] = ['slate', 'blue', 'green', 'amber', 'rose']
 
 function categoryKey(label: string) {
   return label.trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') || crypto.randomUUID()
@@ -55,7 +54,7 @@ export function PlanCategoryEditor({ locale, value, sources, onChange }: PlanCat
           <div className="plan-category-row" key={category.key}>
             <button type="button" className={category.isDefault ? 'category-default-toggle is-active' : 'category-default-toggle'} aria-label={locale === 'es' ? 'Usar como categoría predeterminada' : 'Use as default category'} aria-pressed={Boolean(category.isDefault)} onClick={() => onChange(value.map((item, itemIndex) => ({ ...item, isDefault: itemIndex === index })))}>★</button>
             <input aria-label={t.placeholder} className="field-input" value={category.label} onChange={(event) => onChange(value.map((item, itemIndex) => itemIndex === index ? { ...item, label: event.target.value } : item))} />
-            <select aria-label={t.color} className="field-input" value={category.tone} onChange={(event) => onChange(value.map((item, itemIndex) => itemIndex === index ? { ...item, tone: event.target.value as CategoryMeta['tone'] } : item))}>{tones.map((tone) => <option value={tone} key={tone}>{tone}</option>)}</select>
+            <ColorPicker value={category.colorHex} fallback={category.tone} label={`${t.color}: ${category.label}`} onChange={({ colorHex, colorKey }) => onChange(value.map((item, itemIndex) => itemIndex === index ? { ...item, tone: colorKey, colorHex } : item))} />
             <button type="button" className="btn btn-ghost" aria-label={t.remove} title={t.remove} onClick={() => onChange(value.filter((_, itemIndex) => itemIndex !== index))}>×</button>
           </div>
         ))}

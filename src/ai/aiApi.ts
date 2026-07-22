@@ -1,5 +1,6 @@
 import type { AiPlanningProposal } from '../../shared/ai-proposal-contract/index.js'
-import type { AiOperationDto, AiPlanningTurnResult, AiProposalResult } from './aiTypes'
+import type { AiConversionResult, AiOperationDto, AiPlanningTurnResult, AiProposalResult } from './aiTypes'
+import type { RemotePlan } from '../plans/planApi'
 
 export class AiRequestError extends Error {
   status: number
@@ -44,4 +45,7 @@ export const aiApi = {
   list: () => request<{ operations: AiOperationDto[]; total: number }>('/plan-proposals?page=1&limit=20'),
   get: (id: string, signal?: AbortSignal) => request<AiProposalResult>(`/plan-proposals/${id}`, { signal }),
   remove: (id: string) => request<{ deleted: true }>(`/plan-proposals/${id}`, { method: 'DELETE' }),
+  conversion: (id: string, signal?: AbortSignal) => request<AiConversionResult>(`/plan-proposals/${id}/conversion`, { signal }),
+  convert: (id: string, input: { clientRequestId: string; currentProposal?: AiPlanningProposal; signedProposalToken?: string }, guest: boolean, signal?: AbortSignal) => request<AiConversionResult>(guest ? `/guest/plan-proposals/${id}/convert` : `/plan-proposals/${id}/convert`, { method: 'POST', body: JSON.stringify(input), signal }),
+  createPlan: (id: string, input: { clientMutationId: string; checksum: string }) => request<{ plan: RemotePlan; created: boolean }>(`/plan-proposals/${id}/create-plan`, { method: 'POST', body: JSON.stringify(input) }),
 }

@@ -2,6 +2,7 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ForgePlan } from '../types/forgePlanner'
 import { MemoryStorage } from '../persistence/testStorage'
 import { userIdentityScope } from '../persistence/identityScope'
+import { createCanonicalPlanFixture } from '../../shared/plan-contract/index.js'
 
 const storage = new MemoryStorage()
 let store: typeof import('./useForgePlannerStore').useForgePlannerStore
@@ -61,5 +62,14 @@ describe('authenticated plan cache and outbox', () => {
     expect(store.getState().plans).toEqual([])
     expect(store.getState().activePlanId).toBeUndefined()
     expect(store.getState().syncByPlanId[remote.id]).toBeUndefined()
+  })
+
+  it('mounts an authenticated guest plan transiently without persisting it into the user cache', async () => {
+    const guest = { ...plan('guest-plan'), snapshot: createCanonicalPlanFixture() }
+    store.getState().openGuestPlan(guest)
+    await Promise.resolve()
+    expect(store.getState().activePlanId).toBe('guest-plan')
+    expect(store.getState().plans.some((item) => item.id === 'guest-plan')).toBe(true)
+    expect([...Array(storage.length)].map((_, index) => storage.getItem(storage.key(index)!)).join('\n')).not.toContain('guest-plan')
   })
 })

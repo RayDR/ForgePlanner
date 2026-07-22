@@ -23,7 +23,7 @@ export function adminEmailRoutes(db: PrismaClient, env: AppEnv) {
     const input = testEmailSchema.parse(request.body); const settings = await service.resolve()
     if (!settings) throw new ApiError(409, 'SMTP_NOT_CONFIGURED', 'SMTP is not configured or enabled.')
     const recipient = input.recipient ?? settings.senderEmail
-    const result = await new SmtpEmailProvider(settings).send({ to: recipient, subject: 'NorthStar Planner SMTP test', text: 'NorthStar Planner SMTP configuration is working.', html: '<p><strong>NorthStar Planner</strong> SMTP configuration is working.</p>' })
+    const result = await new SmtpEmailProvider(settings).send({ to: recipient, subject: 'ForgePlanner SMTP test', text: 'ForgePlanner SMTP configuration is working.', html: '<p><strong>ForgePlanner</strong> SMTP configuration is working.</p>' })
     await db.emailDeliveryLog.create({ data: { templateKey: 'smtp-test', templateVersion: 1, recipientHash: (await import('../../security/crypto.js')).hashToken(recipient), provider: result.provider, status: 'sent' } })
     response.json({ delivered: true })
   })

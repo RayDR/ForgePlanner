@@ -46,6 +46,10 @@ enum AiOperationStatus {
   PROPOSED
   REFINING
   READY_FOR_CONVERSION
+  CONVERTING
+  PLAN_PREVIEW_READY
+  CONVERSION_FAILED
+  COMPLETED
   REJECTED
   FAILED
   EXPIRED
@@ -116,39 +120,57 @@ model User {
 }
 
 model AiOperation {
-  id                        String               @id @default(uuid()) @db.Uuid
-  ownerUserId               String               @map("owner_user_id") @db.Uuid
-  type                      String               @default("PLAN_PROPOSAL") @db.VarChar(40)
-  title                     String?              @db.VarChar(160)
-  status                    AiOperationStatus
-  selectedLanguage          AiProposalLanguage   @map("selected_language")
-  detectedLanguage          AiDetectedLanguage   @map("detected_language")
-  provider                  String               @db.VarChar(40)
-  model                     String               @db.VarChar(80)
-  promptTemplateVersion     String               @map("prompt_template_version") @db.VarChar(40)
-  sanitizedInputMetadata    Json                 @map("sanitized_input_metadata")
-  refinementCount           Int                  @default(0) @map("refinement_count")
-  requestFingerprint        String               @map("request_fingerprint") @db.Char(64)
-  generationClientRequestId String               @map("generation_client_request_id") @db.Uuid
-  currentProposalRevisionId String?              @map("current_proposal_revision_id") @db.Uuid
-  readyProposalRevisionId   String?              @map("ready_proposal_revision_id") @db.Uuid
-  processingRequestId       String?              @map("processing_request_id") @db.Uuid
-  processingLeaseExpiresAt  DateTime?            @map("processing_lease_expires_at")
-  expiresAt                 DateTime             @map("expires_at")
-  purgeAfter                DateTime?            @map("purge_after")
-  acceptedAt                DateTime?            @map("accepted_at")
-  rejectedAt                DateTime?            @map("rejected_at")
-  failedAt                  DateTime?            @map("failed_at")
-  errorCode                 String?              @map("error_code") @db.VarChar(80)
-  createdAt                 DateTime             @default(now()) @map("created_at")
-  updatedAt                 DateTime             @updatedAt @map("updated_at")
-  owner                     User                 @relation("AiOperationOwner", fields: [ownerUserId], references: [id], onDelete: Cascade)
-  revisions                 AiProposalRevision[] @relation("AiOperationRevisions")
-  currentProposalRevision   AiProposalRevision?  @relation("AiOperationCurrentRevision", fields: [currentProposalRevisionId], references: [id], onDelete: SetNull)
-  readyProposalRevision     AiProposalRevision?  @relation("AiOperationReadyRevision", fields: [readyProposalRevisionId], references: [id], onDelete: SetNull)
-  requests                  AiOperationRequest[]
+  id                          String               @id @default(uuid()) @db.Uuid
+  ownerUserId                 String               @map("owner_user_id") @db.Uuid
+  type                        String               @default("PLAN_PROPOSAL") @db.VarChar(40)
+  title                       String?              @db.VarChar(160)
+  status                      AiOperationStatus
+  selectedLanguage            AiProposalLanguage   @map("selected_language")
+  detectedLanguage            AiDetectedLanguage   @map("detected_language")
+  provider                    String               @db.VarChar(40)
+  model                       String               @db.VarChar(80)
+  promptTemplateVersion       String               @map("prompt_template_version") @db.VarChar(40)
+  sanitizedInputMetadata      Json                 @map("sanitized_input_metadata")
+  refinementCount             Int                  @default(0) @map("refinement_count")
+  requestFingerprint          String               @map("request_fingerprint") @db.Char(64)
+  generationClientRequestId   String               @map("generation_client_request_id") @db.Uuid
+  currentProposalRevisionId   String?              @map("current_proposal_revision_id") @db.Uuid
+  readyProposalRevisionId     String?              @map("ready_proposal_revision_id") @db.Uuid
+  conversionClientRequestId   String?              @map("conversion_client_request_id") @db.Uuid
+  conversionProvider          String?              @map("conversion_provider") @db.VarChar(40)
+  conversionModel             String?              @map("conversion_model") @db.VarChar(80)
+  conversionPromptVersion     String?              @map("conversion_prompt_version") @db.VarChar(40)
+  conversionSnapshot          Json?                @map("conversion_snapshot")
+  conversionChecksum          String?              @map("conversion_checksum") @db.Char(64)
+  conversionSizeBytes         Int?                 @map("conversion_size_bytes")
+  conversionProviderRequestId String?              @map("conversion_provider_request_id") @db.VarChar(120)
+  conversionInputTokenCount   Int?                 @map("conversion_input_token_count")
+  conversionOutputTokenCount  Int?                 @map("conversion_output_token_count")
+  regenerationCount           Int                  @default(0) @map("regeneration_count")
+  conversionStartedAt         DateTime?            @map("conversion_started_at")
+  previewReadyAt              DateTime?            @map("preview_ready_at")
+  completedAt                 DateTime?            @map("completed_at")
+  createdPlanId               String?              @unique @map("created_plan_id") @db.Uuid
+  processingRequestId         String?              @map("processing_request_id") @db.Uuid
+  processingLeaseExpiresAt    DateTime?            @map("processing_lease_expires_at")
+  expiresAt                   DateTime             @map("expires_at")
+  purgeAfter                  DateTime?            @map("purge_after")
+  acceptedAt                  DateTime?            @map("accepted_at")
+  rejectedAt                  DateTime?            @map("rejected_at")
+  failedAt                    DateTime?            @map("failed_at")
+  errorCode                   String?              @map("error_code") @db.VarChar(80)
+  createdAt                   DateTime             @default(now()) @map("created_at")
+  updatedAt                   DateTime             @updatedAt @map("updated_at")
+  owner                       User                 @relation("AiOperationOwner", fields: [ownerUserId], references: [id], onDelete: Cascade)
+  revisions                   AiProposalRevision[] @relation("AiOperationRevisions")
+  currentProposalRevision     AiProposalRevision?  @relation("AiOperationCurrentRevision", fields: [currentProposalRevisionId], references: [id], onDelete: SetNull)
+  readyProposalRevision       AiProposalRevision?  @relation("AiOperationReadyRevision", fields: [readyProposalRevisionId], references: [id], onDelete: SetNull)
+  requests                    AiOperationRequest[]
+  createdPlan                 Plan?                @relation("AiOperationCreatedPlan", fields: [createdPlanId], references: [id], onDelete: SetNull)
+  planVersions                PlanVersion[]        @relation("PlanVersionAiOperation")
 
   @@unique([ownerUserId, generationClientRequestId])
+  @@unique([ownerUserId, conversionClientRequestId])
   @@index([ownerUserId, createdAt(sort: Desc)])
   @@index([ownerUserId, status, updatedAt(sort: Desc)])
   @@index([status, expiresAt])
@@ -428,28 +450,29 @@ model ImpersonationSession {
 }
 
 model Plan {
-  id               String         @id @default(uuid()) @db.Uuid
-  ownerUserId      String         @map("owner_user_id") @db.Uuid
-  name             String         @db.VarChar(160)
-  objective        String?        @db.Text
-  startDate        DateTime       @map("start_date") @db.Date
-  endDate          DateTime       @map("end_date") @db.Date
-  status           String         @default("active") @db.VarChar(30)
-  snapshot         Json
-  revision         Int            @default(1)
-  importKey        String?        @map("import_key") @db.VarChar(120)
-  clientMutationId String?        @map("client_mutation_id") @db.Uuid
-  createdAt        DateTime       @default(now()) @map("created_at")
-  updatedAt        DateTime       @updatedAt @map("updated_at")
-  deletedAt        DateTime?      @map("deleted_at")
-  purgeAfter       DateTime?      @map("purge_after")
-  deletedByUserId  String?        @map("deleted_by_user_id") @db.Uuid
-  sharingEnabled   Boolean        @default(true) @map("sharing_enabled")
-  owner            User           @relation("PlanOwner", fields: [ownerUserId], references: [id], onDelete: Restrict)
-  deletedBy        User?          @relation("PlanDeletedBy", fields: [deletedByUserId], references: [id], onDelete: SetNull)
-  access           PlanAccess[]
-  shareLink        PlanShareLink?
-  versions         PlanVersion[]
+  id                    String         @id @default(uuid()) @db.Uuid
+  ownerUserId           String         @map("owner_user_id") @db.Uuid
+  name                  String         @db.VarChar(160)
+  objective             String?        @db.Text
+  startDate             DateTime       @map("start_date") @db.Date
+  endDate               DateTime       @map("end_date") @db.Date
+  status                String         @default("active") @db.VarChar(30)
+  snapshot              Json
+  revision              Int            @default(1)
+  importKey             String?        @map("import_key") @db.VarChar(120)
+  clientMutationId      String?        @map("client_mutation_id") @db.Uuid
+  createdAt             DateTime       @default(now()) @map("created_at")
+  updatedAt             DateTime       @updatedAt @map("updated_at")
+  deletedAt             DateTime?      @map("deleted_at")
+  purgeAfter            DateTime?      @map("purge_after")
+  deletedByUserId       String?        @map("deleted_by_user_id") @db.Uuid
+  sharingEnabled        Boolean        @default(true) @map("sharing_enabled")
+  owner                 User           @relation("PlanOwner", fields: [ownerUserId], references: [id], onDelete: Restrict)
+  deletedBy             User?          @relation("PlanDeletedBy", fields: [deletedByUserId], references: [id], onDelete: SetNull)
+  access                PlanAccess[]
+  shareLink             PlanShareLink?
+  versions              PlanVersion[]
+  createdByAiOperations AiOperation[]  @relation("AiOperationCreatedPlan")
 
   @@unique([ownerUserId, importKey])
   @@unique([ownerUserId, clientMutationId])
@@ -469,6 +492,7 @@ model PlanVersion {
   effectiveUserId       String?           @map("effective_user_id") @db.Uuid
   parentVersionId       String?           @map("parent_version_id") @db.Uuid
   restoredFromVersionId String?           @map("restored_from_version_id") @db.Uuid
+  aiOperationId         String?           @map("ai_operation_id") @db.Uuid
   checksum              String            @db.Char(64)
   snapshotSizeBytes     Int               @map("snapshot_size_bytes")
   createdAt             DateTime          @default(now()) @map("created_at")
@@ -479,11 +503,13 @@ model PlanVersion {
   childVersions         PlanVersion[]     @relation("PlanVersionParent")
   restoredFromVersion   PlanVersion?      @relation("PlanVersionRestore", fields: [restoredFromVersionId], references: [id], onDelete: SetNull)
   restoredVersions      PlanVersion[]     @relation("PlanVersionRestore")
+  aiOperation           AiOperation?      @relation("PlanVersionAiOperation", fields: [aiOperationId], references: [id], onDelete: SetNull)
 
   @@unique([planId, revision])
   @@index([planId, revision(sort: Desc)])
   @@index([planId, createdAt(sort: Desc)])
   @@index([planId, source])
+  @@index([aiOperationId])
 }
 
 model PlanShareLink {

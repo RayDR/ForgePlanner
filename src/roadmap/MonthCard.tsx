@@ -5,6 +5,7 @@ import type { Activity, MonthBucket } from '../types/roadmap'
 import { CalendarIcon, ChevronRightIcon } from '../ui/icons'
 import { InlineSavingsValue } from './InlineSavingsValue'
 import { getActivityDisplayId, shouldShowMonthlySavings } from '../utils/roadmapModel'
+import { customColorClass } from '../ui/customColor'
 
 interface MonthEntry {
   activity: Activity
@@ -198,7 +199,7 @@ export function MonthCard({
               const blocker = monthDependencies.get(activity.id)
               const targetMonthId = previousActiveMonth?.id ?? month.id
               return (
-                <li key={activity.id} data-month-activity className={`month-entry-item month-entry-${activity.colorKey}`}>
+                <li key={activity.id} data-month-activity className={`month-entry-item month-entry-${activity.colorKey} ${customColorClass(activity.colorHex)}`}>
                   <div className="month-entry-main">
                     <button
                       className="month-entry-handle"

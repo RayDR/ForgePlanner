@@ -103,6 +103,17 @@ describe('canonical NorthStar plan contract', () => {
     expect(canonicalPlanJsonSchema.required).toContain('metadata')
     expect(canonicalPlanSchema.safeParse({ ...createCanonicalPlanFixture(), arbitrary: true }).success).toBe(false)
   })
+  it('accepts optional exact colors while preserving schema version 8', () => {
+    const plan = createCanonicalPlanFixture()
+    plan.project.categoryDefinitions[0].colorHex = '#123abc'
+    plan.activities[0].colorHex = '#fedcba'
+    const result = safeValidateCanonicalPlan(plan)
+    expect(result.success).toBe(true)
+    if (result.success) {
+      expect(result.plan.schemaVersion).toBe(8)
+      expect(result.plan.activities[0].colorHex).toBe('#fedcba')
+    }
+  })
   it('round trips canonical JSON without identity or operation metadata', () => {
     const exported = JSON.stringify(createCanonicalPlanFixture()); const imported = parsePlanDocument(JSON.parse(exported))
     expect(imported.success).toBe(true); if (!imported.success) return

@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto'
 import type { AiPlanningProposal, PlanningTurn } from '../../../shared/ai-proposal-contract/index.js'
 import type { PlanningInput } from './ai.schemas.js'
-import type { AiProposalProvider, ProviderContext, ProviderResult } from './ai-provider.js'
+import type { AiProposalProvider, PlanConversionContext, ProviderContext, ProviderResult } from './ai-provider.js'
+import { buildCanonicalPlanFromProposal } from './ai-plan-builder.js'
 
 const BUSINESS_WORDS = /\b(business|company|shop|store|startup|negocio|empresa|tienda|cafeter[ií]a|cafe|coffee)\b/i
 const BUSINESS_TYPE_WORDS = /\b(coffee shop|coffee|cafe|cafeter[ií]a|bakery|restaurant|restaurante|consulting|consultor[ií]a|agency|agencia|store|tienda|salon|taller)\b/i
@@ -125,6 +126,7 @@ function decide(input: PlanningInput, language: 'en' | 'es'): PlanningTurn {
 export class MockAiProposalProvider implements AiProposalProvider {
   readonly name = 'mock'
   readonly model = 'deterministic-conversation-v1'
+  readonly conversionModel = 'deterministic-conversion-v1'
 
   async planningTurn(input: PlanningInput, context: ProviderContext) {
     await controlledDelay(`${input.goal} ${input.additionalContext ?? ''}`, context.signal)
@@ -144,5 +146,11 @@ export class MockAiProposalProvider implements AiProposalProvider {
     else proposal = { ...proposal, summary: `${proposal.summary} ${es ? 'Ajuste solicitado incorporado.' : 'Requested adjustment incorporated.'}` }
     const language = context.language.toLowerCase() as 'en' | 'es'
     return result({ action: 'PROPOSE', proposal, language }, context.correlationId)
+  }
+
+  async convertAcceptedProposalToPlan(proposal: AiPlanningProposal, context: PlanConversionContext) {
+    await controlledDelay(proposal.title, context.signal)
+    if (proposal.title.includes('[mock:invalid-plan]')) return { plan: { schemaVersion: 8 }, providerRequestId: 'mock_invalid_plan', inputTokenCount: null, outputTokenCount: null, estimatedCostMicros: null }
+    return { plan: buildCanonicalPlanFromProposal(proposal, context.language, context.approvedContext, context.now), providerRequestId: `mock_conversion_${context.correlationId}`, inputTokenCount: null, outputTokenCount: null, estimatedCostMicros: null }
   }
 }

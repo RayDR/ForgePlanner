@@ -24,7 +24,7 @@ describe('visible plan cards', () => {
     ])
     expect(eligibleLocalCards(cards).map(({ plan: item }) => item.id)).toEqual(['outbox', 'guest-b'])
     expect(cards.find(({ plan: item }) => item.id === 'guest-a')).toMatchObject({ syncState: 'saving', canSync: false, canRetry: false })
-    expect(cards.find(({ plan: item }) => item.id === 'guest-b')?.canOpen).toBe(false)
+    expect(cards.find(({ plan: item }) => item.id === 'guest-b')?.canOpen).toBe(true)
   })
 
   it('never duplicates a plan already represented by the account source', () => {
